@@ -5,3 +5,6 @@ __pycache__/
 *.db
 .env
 *.log
+*.sqlite
+api/data/
+web/dist/
