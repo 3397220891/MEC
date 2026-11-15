@@ -1,9 +1,26 @@
-import type { ChatReply, ChatStreamEvent, ChatTurn, Investigation, ManeuverPlan, MissionState, Scenario, Separation, Trajectories } from "./types";
+import type { ChatReply, ChatStreamEvent, ChatTurn, Health, Investigation, ManeuverPlan, MissionState, Scenario, Separation, Trajectories } from "./types";
 
 export class ApiError extends Error {
   constructor(public status: number, message: string) {
     super(message);
   }
+}
+
+export const BACKEND_DOWN = "Backend unreachable: the API server is not running or not reachable from the web server (check the uvicorn terminal).";
+
+/** Turn an error response into a readable ApiError (FastAPI {detail}, our 500 handler, or a proxy failure). */
+async function errorFrom(res: Response): Promise<ApiError> {
+  let detail: string | null = null;
+  try {
+    const body = await res.json();
+    detail = typeof body.detail === "string" ? body.detail : JSON.stringify(body.detail);
+  } catch {
+    /* non-JSON body: the Next.js proxy could not reach FastAPI */
+  }
+  if (detail === null) {
+    return new ApiError(0, res.status >= 500 ? BACKEND_DOWN : `${res.status} ${res.statusText}`);
+  }
+  return new ApiError(res.status, detail);
 }
 
 async function req<T>(path: string, init?: RequestInit, timeoutMs = 20000): Promise<T> {
@@ -16,27 +33,19 @@ async function req<T>(path: string, init?: RequestInit, timeoutMs = 20000): Prom
       headers: { "content-type": "application/json", ...(init?.headers ?? {}) },
       cache: "no-store",
     });
-    if (!res.ok) {
-      let detail = res.statusText;
-      try {
-        const body = await res.json();
-        detail = typeof body.detail === "string" ? body.detail : JSON.stringify(body.detail);
-      } catch {
-        /* non-JSON error body */
-      }
-      throw new ApiError(res.status, detail);
-    }
+    if (!res.ok) throw await errorFrom(res);
     return (await res.json()) as T;
   } catch (e) {
     if (e instanceof ApiError) throw e;
-    if (e instanceof DOMException && e.name === "AbortError") throw new ApiError(0, "Backend request timed out");
-    throw new ApiError(0, "Backend unreachable. Is the FastAPI server running on :8000?");
+    if (e instanceof DOMException && e.name === "AbortError") throw new ApiError(0, `Backend did not answer within ${Math.round(timeoutMs / 1000)} s`);
+    throw new ApiError(0, BACKEND_DOWN);
   } finally {
     clearTimeout(timer);
   }
 }
 
 export const api = {
+  health: (probe = false) => req<Health>(`/health${probe ? "?probe=true" : ""}`, undefined, 12000),
   scenarios: () => req<Scenario[]>("/scenarios"),
   loadScenario: (id: string) =>
     req<{ scenario_id: string; investigations_started: string[] }>(`/scenarios/${id}/load`, { method: "POST" }, 60000),
@@ -68,26 +77,52 @@ export const api = {
  * Calls onEvent for every Server-Sent Event; resolves when the stream ends.
  */
 export async function chatStream(question: string, eventId: string | null, history: ChatTurn[],
-  onEvent: (e: ChatStreamEvent) => void, signal?: AbortSignal): Promise<void> {
-  const res = await fetch("/api/chat/stream", {
-    method: "POST", headers: { "Content-Type": "application/json" }, signal,
-    body: JSON.stringify({ question, event_id: eventId, history }),
-  });
-  if (!res.ok || !res.body) throw new ApiError(res.status, `Chat stream failed (${res.status})`);
-  const reader = res.body.getReader();
-  const decoder = new TextDecoder();
-  let buf = "";
-  for (;;) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    buf += decoder.decode(value, { stream: true });
-    let cut: number;
-    while ((cut = buf.indexOf("\n\n")) >= 0) {
-      const block = buf.slice(0, cut);
-      buf = buf.slice(cut + 2);
-      for (const line of block.split("\n")) {
-        if (line.startsWith("data: ")) onEvent(JSON.parse(line.slice(6)) as ChatStreamEvent);
+  onEvent: (e: ChatStreamEvent) => void, idleTimeoutMs = 60000): Promise<void> {
+  // Abort if nothing arrives for idleTimeoutMs (stuck model or network), so the UI never spins forever.
+  const ctrl = new AbortController();
+  let idle = setTimeout(() => ctrl.abort(), idleTimeoutMs);
+  const touch = () => { clearTimeout(idle); idle = setTimeout(() => ctrl.abort(), idleTimeoutMs); };
+  let gotFinal = false;
+  try {
+    let res: Response;
+    try {
+      res = await fetch("/api/chat/stream", {
+        method: "POST", headers: { "Content-Type": "application/json" }, signal: ctrl.signal,
+        body: JSON.stringify({ question, event_id: eventId, history }),
+      });
+    } catch {
+      throw new ApiError(0, ctrl.signal.aborted ? `No response from the agent within ${idleTimeoutMs / 1000} s` : BACKEND_DOWN);
+    }
+    if (!res.ok || !res.body) throw await errorFrom(res);
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buf = "";
+    for (;;) {
+      let chunk: ReadableStreamReadResult<Uint8Array>;
+      try {
+        chunk = await reader.read();
+      } catch {
+        throw new ApiError(0, ctrl.signal.aborted
+          ? `The agent stopped responding (no data for ${idleTimeoutMs / 1000} s); the answer is incomplete`
+          : "Connection to the backend dropped mid-answer; the answer is incomplete");
+      }
+      if (chunk.done) break;
+      touch();
+      buf += decoder.decode(chunk.value, { stream: true });
+      let cut: number;
+      while ((cut = buf.indexOf("\n\n")) >= 0) {
+        const block = buf.slice(0, cut);
+        buf = buf.slice(cut + 2);
+        for (const line of block.split("\n")) {
+          if (!line.startsWith("data: ")) continue;
+          const e = JSON.parse(line.slice(6)) as ChatStreamEvent;
+          if (e.type === "final") gotFinal = true;
+          onEvent(e);
+        }
       }
     }
+    if (!gotFinal) throw new ApiError(0, "The answer stream ended unexpectedly; the answer may be incomplete");
+  } finally {
+    clearTimeout(idle);
   }
 }

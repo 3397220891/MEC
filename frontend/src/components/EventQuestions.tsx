@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { chatStream } from "@/lib/api";
+import { errorText } from "@/lib/toast";
 import type { ChatStreamEvent, ChatTurn, CloseEvent, ComparisonRow, Investigation, MissionState } from "@/lib/types";
 
 const questions = [
@@ -25,6 +26,7 @@ type Exchange = {
   model?: string;
   evidenceIds?: string[];
   warn?: string;
+  failed?: boolean; // the agent could not answer normally (fallback, error, timeout); offer a retry
   items: Item[]; // streamed transcript: reasoning, narration/answer text, tool calls with results
   toolCalls?: number;
 };
@@ -33,7 +35,7 @@ type ToolResult = Extract<ChatStreamEvent, { type: "tool_result" }>;
 type Item =
   | { kind: "thought"; text: string }
   | { kind: "text"; text: string }
-  | { kind: "notice"; text: string }
+  | { kind: "notice"; text: string; level: "warn" | "error" }
   | { kind: "tool"; id: string; name: string; input: Record<string, unknown> | null; result?: ToolResult };
 
 const DIRECTOR_QUESTION = "Which alert should I review first?";
@@ -53,8 +55,8 @@ function applyEvent(x: Exchange, e: ChatStreamEvent): Exchange {
       return { ...x, items };
     case "notice":
     case "error":
-      items.push({ kind: "notice", text: e.message });
-      return { ...x, items };
+      items.push({ kind: "notice", text: e.message, level: e.type === "error" ? "error" : "warn" });
+      return { ...x, items, failed: true };
     case "tool_call":
       items.push({ kind: "tool", id: e.id, name: e.name, input: e.input });
       return { ...x, items };
@@ -139,10 +141,10 @@ export default function EventQuestions({ event, events, investigations, onSelect
       : unavailable,
   };
 
-  async function send(prompt: string, topic = questionTopic(prompt)) {
+  async function send(prompt: string, topic = questionTopic(prompt), to: "event" | "director" = recipient) {
     const message = prompt.trim();
     if (!message) return;
-    const toDirector = recipient === "director";
+    const toDirector = to === "director";
     const agentId = toDirector ? null : event.id;
     const evidence = toDirector ? undefined : topic === "risk"
       ? "event-screening-details"
@@ -167,8 +169,13 @@ export default function EventQuestions({ event, events, investigations, onSelect
       // Reasoning, every tool call the model makes, the computed results and the answer arrive as they happen.
       await chatStream(message, agentId, history, (e) => update((x) => applyEvent(x, e)));
       update((x) => (x.pending ? { ...x, pending: false, answer: x.answer || local, mode: x.mode ?? "offline" } : x));
-    } catch {
-      update((x) => ({ ...x, pending: false, answer: local, mode: "offline", items: [...x.items, { kind: "notice", text: "Backend unreachable; local answer" }, { kind: "text", text: local }] }));
+    } catch (e) {
+      // Keep whatever already streamed (tool results stay valid), say clearly what broke, and fall back locally.
+      update((x) => ({
+        ...x, pending: false, failed: true, mode: "offline", answer: x.answer || local,
+        items: [...x.items, { kind: "notice", level: "error", text: errorText(e) },
+          ...(x.items.some((it) => it.kind === "text") ? [] : [{ kind: "text" as const, text: `Local answer (no AI): ${local}` }])],
+      }));
     }
   }
 
@@ -241,7 +248,12 @@ export default function EventQuestions({ event, events, investigations, onSelect
                         <p className="mt-1 max-h-40 overflow-y-auto whitespace-pre-wrap">{it.text}</p>
                       </details>
                     );
-                    if (it.kind === "notice") return <p key={i} className="text-[11px] text-amber">! {it.text}</p>;
+                    if (it.kind === "notice") return (
+                      <p key={i} role={it.level === "error" ? "alert" : "status"}
+                        className={`rounded-md border px-2 py-1 text-[11px] ${it.level === "error" ? "border-red/60 bg-red/10 text-red" : "border-amber/60 bg-amber/10 text-amber"}`}>
+                        {it.level === "error" ? "⛔ " : "⚠ "}{it.text}
+                      </p>
+                    );
                     if (it.kind === "text") return <p key={i} className="whitespace-pre-wrap">{it.text}</p>;
                     return (
                       <div key={i} className="rounded-md border border-accent/30 bg-bg/60 px-2 py-1.5 font-mono text-[10.5px] leading-snug">
@@ -258,6 +270,12 @@ export default function EventQuestions({ event, events, investigations, onSelect
                       </div>
                     );
                   })}
+                  {!entry.pending && entry.failed && (
+                    <button type="button" onClick={() => send(entry.prompt, entry.topic, entry.agentId ? "event" : "director")}
+                      className="rounded-md border border-line px-2 py-0.5 text-[11px] text-ink-2 hover:border-accent/60 hover:text-accent">
+                      ↻ Retry with the AI agent
+                    </button>
+                  )}
                   {entry.pending && <p className="animate-pulse text-watch">● {entry.items.length ? "working…" : "thinking…"}</p>}
                   {!entry.pending && !entry.items.some((it) => it.kind === "text") && <p className="whitespace-pre-wrap">{entry.answer}</p>}
                 </div>

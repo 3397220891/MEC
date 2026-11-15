@@ -3,13 +3,14 @@ from __future__ import annotations
 
 import json
 import logging
+import uuid
 from contextlib import asynccontextmanager
 from typing import Literal
 
 import numpy as np
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, Field
 
 from . import config, db
@@ -17,6 +18,7 @@ from .agent import chat, chat_stream, runner
 from .physics import maneuver as mnv
 from .physics.propagation import state, states
 from .physics.screening import separation_series
+from .services import health as health_svc
 from .services import plan
 from .services.state import SCENARIO_LIST, STORE
 
@@ -54,6 +56,16 @@ app = FastAPI(title="OrbitalGuard AI", version="0.1.0", lifespan=lifespan,
 app.add_middleware(CORSMiddleware, allow_origins=config.CORS_ORIGINS, allow_methods=["GET", "POST"], allow_headers=["*"])
 
 
+@app.exception_handler(Exception)
+async def unhandled_error(request: Request, exc: Exception):
+    """Any unexpected error becomes a readable JSON error with a reference the operator can quote."""
+    ref = uuid.uuid4().hex[:8]
+    log.exception("unhandled error %s on %s %s", ref, request.method, request.url.path)
+    return JSONResponse(status_code=500, content={
+        "detail": f"Internal error ({type(exc).__name__}) while handling {request.url.path}. Reference {ref}; details are in the server log.",
+        "error": "internal_error", "reference": ref, "path": request.url.path})
+
+
 def _mission():
     return STORE.require()
 
@@ -68,9 +80,11 @@ def _event(event_id: str) -> dict:
 # ------------------------------------------------------------------ system
 
 @app.get("/api/health")
-def health():
+def health(probe: bool = False):
+    """llm_available = an API key is configured; llm.state = whether the LLM is actually reachable right now."""
     m = STORE.mission
     return {"status": "ok", "llm_available": config.llm_configured(), "model": config.MODEL if config.llm_configured() else None,
+            "llm": health_svc.llm_status(force=probe),
             "scenario": m.scenario_id if m else None, "data_source": m.data_info.get("source") if m else None,
             "actuation_capability": False}
 

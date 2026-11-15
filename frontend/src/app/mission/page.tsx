@@ -4,14 +4,18 @@ import dynamic from "next/dynamic";
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import AgentPanel from "@/components/AgentPanel";
+import ErrorBoundary from "@/components/ErrorBoundary";
+import { ConnectionBanner, StatusPills } from "@/components/SystemStatus";
+import Toasts from "@/components/Toasts";
 import { AlertQueue, OrbitalReadings, TrackingSummary } from "@/components/MissionReadings";
 import ObjectPanel from "@/components/ObjectPanel";
 import ReportModal from "@/components/ReportModal";
 import TimelineBar from "@/components/TimelineBar";
 import { api } from "@/lib/api";
 import { clock, seek } from "@/lib/clock";
+import { errorText, toast } from "@/lib/toast";
 import "../mission.css";
-import type { Investigation, ManeuverPlan, MissionState, Trajectories } from "@/lib/types";
+import type { Health, Investigation, ManeuverPlan, MissionState, Trajectories } from "@/lib/types";
 
 const Globe = dynamic(() => import("@/components/Globe"), {
   ssr: false,
@@ -33,6 +37,8 @@ export default function MissionPage() {
   const [reviewRequest, setReviewRequest] = useState<{ eventId: string } | null>(null);
   const [reportOpen, setReportOpen] = useState(false);
   const [plan, setPlan] = useState<ManeuverPlan | null>(null);
+  const [health, setHealth] = useState<Health | null>(null);
+  const [lastOkAt, setLastOkAt] = useState<number | null>(null);
   const stageRef = useRef<HTMLElement>(null);
   const leftRef = useRef<HTMLDivElement>(null);
   const rightRef = useRef<HTMLDivElement>(null);
@@ -58,6 +64,7 @@ export default function MissionPage() {
       const s = await api.state();
       setState(s);
       setError(null);
+      setLastOkAt(Date.now());
       return s;
     } catch (e) {
       setError((e as Error).message);
@@ -95,6 +102,39 @@ export default function MissionPage() {
     loadAll().catch((e: Error) => setError(e.message)).finally(() => setLoading(null));
   }, [loadAll]);
 
+  // Backend + real LLM reachability, polled; state changes are announced with a toast.
+  const checkHealth = useCallback(async (probe = false) => {
+    try {
+      const h = await api.health(probe);
+      setHealth((prev) => {
+        if (prev && prev.llm.state !== h.llm.state) {
+          if (h.llm.state === "online") toast("ok", "AI agent back online", h.llm.detail);
+          else toast(h.llm.state === "not_configured" ? "info" : "warn", "AI agent unavailable — using the rule-based planner", h.llm.detail);
+        }
+        return h;
+      });
+    } catch {
+      /* the state poll reports backend outages */
+    }
+  }, []);
+  useEffect(() => {
+    checkHealth();
+    const id = setInterval(() => checkHealth(), 15000);
+    return () => clearInterval(id);
+  }, [checkHealth]);
+
+  const backendDown = !!error && !loading;
+  const wasDown = useRef(false);
+  useEffect(() => {
+    if (backendDown && !wasDown.current) toast("error", "Backend connection lost", error ?? undefined);
+    if (!backendDown && wasDown.current) {
+      toast("ok", "Backend reconnected");
+      checkHealth(true);
+      if (!traj) loadAll().catch(() => undefined); // first load never completed: fetch orbits now
+    }
+    wasDown.current = backendDown;
+  }, [backendDown, error, checkHealth, traj, loadAll]);
+
   // Keep event / investigation list fresh.
   useEffect(() => {
     const id = setInterval(refreshState, 3000);
@@ -112,7 +152,11 @@ export default function MissionPage() {
   useEffect(() => {
     if (!planKey) return setPlan(null);
     let live = true;
-    api.plan(planKey).then((p) => live && setPlan(p)).catch(() => live && setPlan(null));
+    api.plan(planKey).then((p) => live && setPlan(p)).catch((e) => {
+      if (!live) return;
+      setPlan(null);
+      toast("warn", "Maneuver plan could not be drawn on the globe", errorText(e));
+    });
     return () => { live = false; };
   }, [planKey]);
 
@@ -137,7 +181,7 @@ export default function MissionPage() {
       await api.startInvestigation(eventId);
       await refreshState();
     } catch (e) {
-      setError((e as Error).message);
+      toast("error", `Could not start the investigation for ${eventId}`, errorText(e));
     }
   }
 
@@ -182,16 +226,21 @@ export default function MissionPage() {
           <Link href="/login" className="rounded border border-line px-2 py-0.5 text-ink-2 hover:text-ink">
             {demoCallsign ? `Demo · ${demoCallsign}` : "Operator login"}
           </Link>
+          <StatusPills backendOk={!backendDown} health={health} onRecheck={() => checkHealth(true)} />
           <span className="rounded bg-panel-2 px-2 py-0.5 text-ink-2" title="This system has no command capability">ADVISORY ONLY · NO UPLINK</span>
         </div>
       </header>
+
+      {backendDown && <ConnectionBanner error={error!} lastOkAt={lastOkAt} onRetry={() => { (state ? refreshState() : loadAll()).catch(() => undefined); }} />}
 
       {state && <AlertQueue events={[...state.events].sort((a, b) => SEV_RANK[a.severity] - SEV_RANK[b.severity] || a.tca_s - b.tca_s)}
         investigations={state.investigations} selectedId={activeEventId} onSelect={selectEvent} onReview={reviewEvent} />}
 
       <section ref={stageRef} className="mission-stage" aria-label="Mission control">
         <div className="mission-scene" aria-label="Interactive orbital view">
+          <ErrorBoundary name="3D view">
           <Globe traj={traj} objects={state?.objects ?? []} selectedId={selectedId} onSelect={selectObject} event={activeEvent} plan={plan} insets={insets} />
+          </ErrorBoundary>
         </div>
 
         <TrackingSummary
@@ -225,16 +274,15 @@ export default function MissionPage() {
             }}
             llmAvailable={state?.llm_available ?? false}
             thresholds={state?.thresholds_km}
-            onShowManeuver={(invId, mid) => { api.plan(invId, mid).then(setPlan).catch(() => undefined); }}
+            onShowManeuver={(invId, mid) => {
+              api.plan(invId, mid).then((p) => { setPlan(p); toast("info", `Showing ${mid} on the globe`, p.options.find((o) => o.maneuver_id === mid)?.label); })
+                .catch((e) => toast("error", `Could not draw ${mid} on the globe`, errorText(e)));
+            }}
           />
         </div>
 
         <div className="mission-bottom">
-          {(loading || error) && (
-            <p className="mission-status mission-card" role={error && !loading ? "alert" : "status"}>
-              {loading ?? error}
-            </p>
-          )}
+          {loading && <p className="mission-status mission-card" role="status">{loading}</p>}
           {state && (
             <TimelineBar
               horizon={state.horizon_s}
@@ -255,6 +303,7 @@ export default function MissionPage() {
         <ObjectPanel objects={state?.objects ?? []} events={state?.events ?? []} traj={traj} selectedId={selectedId} onSelect={selectObject} />
       </dialog>
 
+      <Toasts />
       {reportOpen && inv && inv.event_id === activeEventId && <ReportModal inv={inv} onClose={() => setReportOpen(false)} />}
     </main>
   );
