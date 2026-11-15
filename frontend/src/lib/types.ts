@@ -205,3 +205,14 @@ export interface ManeuverPlan {
     new_tca_position_km: [number, number, number];
   } | null;
 }
+
+/** Server-Sent Events from POST /api/chat/stream. */
+export type ChatStreamEvent =
+  | { type: "start"; agent: string; event_id: string | null; mode: "llm" | "fallback"; model: string }
+  | { type: "thought"; delta: string }
+  | { type: "text"; delta: string }
+  | { type: "tool_call"; id: string; name: string; input: Record<string, unknown> | null }
+  | { type: "tool_result"; id: string; name: string; ok: boolean; evidence_id: string | null; summary: string; maneuver_id?: string; investigation_id?: string }
+  | { type: "notice"; message: string }
+  | { type: "error"; message: string }
+  | { type: "final"; answer: string; evidence: string[]; mode: "llm" | "fallback"; model: string; tool_calls: number; reason?: string | null; check: ChatReply["check"] };

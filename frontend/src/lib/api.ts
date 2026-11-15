@@ -1,4 +1,4 @@
-import type { ChatReply, ChatTurn, Investigation, ManeuverPlan, MissionState, Scenario, Separation, Trajectories } from "./types";
+import type { ChatReply, ChatStreamEvent, ChatTurn, Investigation, ManeuverPlan, MissionState, Scenario, Separation, Trajectories } from "./types";
 
 export class ApiError extends Error {
   constructor(public status: number, message: string) {
@@ -62,3 +62,32 @@ export const api = {
     return req<Separation>(`/events/${eventId}/separation?${q}`);
   },
 };
+
+/**
+ * Stream an agent chat answer: reasoning, tool calls and their results, then the answer text, as they happen.
+ * Calls onEvent for every Server-Sent Event; resolves when the stream ends.
+ */
+export async function chatStream(question: string, eventId: string | null, history: ChatTurn[],
+  onEvent: (e: ChatStreamEvent) => void, signal?: AbortSignal): Promise<void> {
+  const res = await fetch("/api/chat/stream", {
+    method: "POST", headers: { "Content-Type": "application/json" }, signal,
+    body: JSON.stringify({ question, event_id: eventId, history }),
+  });
+  if (!res.ok || !res.body) throw new ApiError(res.status, `Chat stream failed (${res.status})`);
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buf = "";
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buf += decoder.decode(value, { stream: true });
+    let cut: number;
+    while ((cut = buf.indexOf("\n\n")) >= 0) {
+      const block = buf.slice(0, cut);
+      buf = buf.slice(cut + 2);
+      for (const line of block.split("\n")) {
+        if (line.startsWith("data: ")) onEvent(JSON.parse(line.slice(6)) as ChatStreamEvent);
+      }
+    }
+  }
+}

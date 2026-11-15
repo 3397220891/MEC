@@ -194,6 +194,7 @@ export default function MissionPage() {
             }}
             llmAvailable={state?.llm_available ?? false}
             thresholds={state?.thresholds_km}
+            onShowManeuver={(invId, mid) => { api.plan(invId, mid).then(setPlan).catch(() => undefined); }}
           />
         </div>
 

@@ -1,6 +1,7 @@
 """OrbitalGuard AI — FastAPI application."""
 from __future__ import annotations
 
+import json
 import logging
 from contextlib import asynccontextmanager
 from typing import Literal
@@ -8,10 +9,11 @@ from typing import Literal
 import numpy as np
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 from . import config, db
-from .agent import chat, runner
+from .agent import chat, chat_stream, runner
 from .physics import maneuver as mnv
 from .physics.propagation import state, states
 from .physics.screening import separation_series
@@ -231,6 +233,29 @@ def chat_endpoint(body: ChatRequest):
     """Ask a Sentinel agent (event_id) or the Mission Director (no event_id). Context is rebuilt server-side."""
     event = _event(body.event_id) if body.event_id else None
     return chat.answer(_mission(), event, body.question.strip(), [t.model_dump() for t in body.history])
+
+
+def _sse(item: dict) -> str:
+    return "data: " + json.dumps(item, ensure_ascii=False) + "\n\n"
+
+
+@app.post("/api/chat/stream")
+def chat_stream_endpoint(body: ChatRequest):
+    """Same as /api/chat, but the agent may call analysis tools and every step is streamed (Server-Sent Events)."""
+    event = _event(body.event_id) if body.event_id else None
+    mission = _mission()
+    history = [t.model_dump() for t in body.history]
+
+    def events():
+        try:
+            for item in chat_stream.stream_answer(mission, event, body.question.strip(), history):
+                yield _sse(item)
+        except Exception as e:  # never leave the client hanging
+            log.exception("chat stream failed")
+            yield _sse({"type": "error", "message": f"{type(e).__name__}: {e}"})
+
+    return StreamingResponse(events(), media_type="text/event-stream",
+                             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
 
 
 @app.get("/api/audit")

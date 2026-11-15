@@ -1,8 +1,8 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { api } from "@/lib/api";
-import type { ChatTurn, CloseEvent, ComparisonRow, Investigation, MissionState } from "@/lib/types";
+import { chatStream } from "@/lib/api";
+import type { ChatStreamEvent, ChatTurn, CloseEvent, ComparisonRow, Investigation, MissionState } from "@/lib/types";
 
 const questions = [
   { id: "risk", label: "Why this risk level?" },
@@ -25,9 +25,59 @@ type Exchange = {
   model?: string;
   evidenceIds?: string[];
   warn?: string;
+  items: Item[]; // streamed transcript: reasoning, narration/answer text, tool calls with results
+  toolCalls?: number;
 };
 
+type ToolResult = Extract<ChatStreamEvent, { type: "tool_result" }>;
+type Item =
+  | { kind: "thought"; text: string }
+  | { kind: "text"; text: string }
+  | { kind: "notice"; text: string }
+  | { kind: "tool"; id: string; name: string; input: Record<string, unknown> | null; result?: ToolResult };
+
 const DIRECTOR_QUESTION = "Which alert should I review first?";
+const WHAT_IF = "What if we burn 90 min before TCA instead?";
+
+/** Fold one stream event into the transcript (pure, so React state stays immutable). */
+function applyEvent(x: Exchange, e: ChatStreamEvent): Exchange {
+  const items = [...x.items];
+  const last = items[items.length - 1];
+  switch (e.type) {
+    case "start":
+      return { ...x, mode: e.mode, model: e.model };
+    case "thought":
+    case "text":
+      if (last && last.kind === e.type) items[items.length - 1] = { ...last, text: last.text + e.delta };
+      else items.push({ kind: e.type, text: e.delta });
+      return { ...x, items };
+    case "notice":
+    case "error":
+      items.push({ kind: "notice", text: e.message });
+      return { ...x, items };
+    case "tool_call":
+      items.push({ kind: "tool", id: e.id, name: e.name, input: e.input });
+      return { ...x, items };
+    case "tool_result": {
+      const i = items.findLastIndex((it) => it.kind === "tool" && (it.id === e.id || !it.result));
+      if (i >= 0) items[i] = { ...(items[i] as Extract<Item, { kind: "tool" }>), result: e };
+      return { ...x, items };
+    }
+    case "final": {
+      const issues = [...e.check.unknown_evidence.map((id) => `unknown ${id}`), ...e.check.unverified_numbers.map((n) => `unverified ${n}`)];
+      return { ...x, answer: e.answer, mode: e.mode, model: e.model, evidenceIds: e.evidence, toolCalls: e.tool_calls,
+        warn: issues.length ? issues.join(", ") : undefined, pending: false };
+    }
+  }
+}
+
+function toolArgs(input: Record<string, unknown> | null): string {
+  if (!input) return "invalid arguments";
+  return Object.entries(input)
+    .filter(([k]) => k !== "satellite_id" && k !== "secondary_id" && k !== "satellite_a" && k !== "satellite_b")
+    .map(([k, v]) => `${k}=${Array.isArray(v) ? v.join(",") : String(v)}`)
+    .join(" · ");
+}
 
 function agentName(eventId: string) {
   return `Sentinel ${eventId.replace(/^EVT-/, "")}`;
@@ -40,7 +90,7 @@ function questionTopic(prompt: string): Topic | undefined {
   if (/maneuver|manoeuvre|delta.?v|compare|option|机动|方案/.test(text)) return "maneuver";
 }
 
-export default function EventQuestions({ event, events, investigations, onSelectEvent, investigation, thresholds, options, optionId, onEvidence }: {
+export default function EventQuestions({ event, events, investigations, onSelectEvent, investigation, thresholds, options, optionId, onEvidence, onShowManeuver }: {
   event: CloseEvent;
   events: CloseEvent[];
   investigations: MissionState["investigations"];
@@ -50,6 +100,7 @@ export default function EventQuestions({ event, events, investigations, onSelect
   options: ComparisonRow[];
   optionId: string;
   onEvidence: (id: string) => void;
+  onShowManeuver?: (investigationId: string, maneuverId: string) => void;
 }) {
   const [draft, setDraft] = useState("");
   const [exchanges, setExchanges] = useState<Exchange[]>([]);
@@ -108,17 +159,16 @@ export default function EventQuestions({ event, events, investigations, onSelect
       .slice(-4)
       .flatMap((x) => [{ role: "user" as const, content: x.prompt }, { role: "assistant" as const, content: x.answer }]);
     const key = Date.now() + Math.random();
-    setExchanges((previous) => [...previous, { key, eventId: event.id, agentId, prompt: message, topic, evidence, comparison, answer: "", pending: true }]);
+    setExchanges((previous) => [...previous, { key, eventId: event.id, agentId, prompt: message, topic, evidence, comparison, answer: "", pending: true, items: [] }]);
     setDraft("");
-    let patch: Partial<Exchange>;
+    const update = (fn: (x: Exchange) => Exchange) => setExchanges((previous) => previous.map((x) => (x.key === key ? fn(x) : x)));
     try {
-      const r = await api.chat(message, agentId, history);
-      const issues = [...r.check.unknown_evidence.map((e) => `unknown ${e}`), ...r.check.unverified_numbers.map((n) => `unverified ${n}`)];
-      patch = { answer: r.answer, mode: r.mode, model: r.model, evidenceIds: r.evidence, warn: issues.length ? issues.join(", ") : undefined };
+      // Reasoning, every tool call the model makes, the computed results and the answer arrive as they happen.
+      await chatStream(message, agentId, history, (e) => update((x) => applyEvent(x, e)));
+      update((x) => (x.pending ? { ...x, pending: false, answer: x.answer || local, mode: x.mode ?? "offline" } : x));
     } catch {
-      patch = { answer: local, mode: "offline" };
+      update((x) => ({ ...x, pending: false, answer: local, mode: "offline", items: [...x.items, { kind: "notice", text: "Backend unreachable; local answer" }, { kind: "text", text: local }] }));
     }
-    setExchanges((previous) => previous.map((x) => (x.key === key ? { ...x, ...patch, pending: false } : x)));
   }
 
   return (
@@ -176,7 +226,39 @@ export default function EventQuestions({ event, events, investigations, onSelect
                     </span>
                   )}
                 </p>
-                {entry.pending ? <p className="animate-pulse text-watch">● thinking…</p> : <p className="whitespace-pre-wrap">{entry.answer}</p>}
+                <div className="mt-1 space-y-1.5">
+                  {entry.items.map((it, i) => {
+                    if (it.kind === "thought") return (
+                      <details key={i} className="rounded-md border border-line/60 bg-panel-2/40 px-2 py-1 text-[11px] text-muted">
+                        <summary className="cursor-pointer select-none">💭 {entry.model ?? "model"} reasoning · {it.text.length} chars</summary>
+                        <p className="mt-1 max-h-40 overflow-y-auto whitespace-pre-wrap">{it.text}</p>
+                      </details>
+                    );
+                    if (it.kind === "notice") return <p key={i} className="text-[11px] text-amber">! {it.text}</p>;
+                    if (it.kind === "text") return <p key={i} className="whitespace-pre-wrap">{it.text}</p>;
+                    return (
+                      <div key={i} className="rounded-md border border-accent/30 bg-bg/60 px-2 py-1.5 font-mono text-[10.5px] leading-snug">
+                        <p className="text-accent">🔧 {it.name}<span className="text-muted"> ({toolArgs(it.input)})</span></p>
+                        {it.result ? (
+                          <p className={it.result.ok ? "text-ink-2" : "text-amber"}>
+                            {it.result.ok ? "✓" : "✗"} {it.result.evidence_id && <strong className="text-ink">{it.result.evidence_id} </strong>}{it.result.summary}
+                            {it.result.maneuver_id && it.result.investigation_id && onShowManeuver && (
+                              <button type="button" onClick={() => onShowManeuver(it.result!.investigation_id!, it.result!.maneuver_id!)}
+                                className="ml-1.5 font-sans text-watch underline underline-offset-2">show on globe ↗</button>
+                            )}
+                          </p>
+                        ) : <p className="animate-pulse text-watch">… running OrbitalGuard physics</p>}
+                      </div>
+                    );
+                  })}
+                  {entry.pending && <p className="animate-pulse text-watch">● {entry.items.length ? "working…" : "thinking…"}</p>}
+                  {!entry.pending && !entry.items.some((it) => it.kind === "text") && <p className="whitespace-pre-wrap">{entry.answer}</p>}
+                </div>
+                {!entry.pending && entry.mode === "llm" && (
+                  <p className="mt-1 text-[10px] text-muted">
+                    {entry.toolCalls ? `${entry.toolCalls} tool call(s) computed by OrbitalGuard physics, requested by ${entry.model}` : `answered by ${entry.model} from existing evidence`}
+                  </p>
+                )}
                 {!!entry.evidenceIds?.length && (
                   <p className="mt-1 font-mono text-[10px] text-muted">evidence: {entry.evidenceIds.join(" · ")}</p>
                 )}
@@ -210,7 +292,7 @@ export default function EventQuestions({ event, events, investigations, onSelect
           ))}
         </div>
         <div className="mb-2 flex flex-wrap gap-1.5">
-          {(recipient === "director" ? [{ id: undefined, label: DIRECTOR_QUESTION }] : questions).map(({ id, label }) => (
+          {(recipient === "director" ? [{ id: undefined, label: DIRECTOR_QUESTION }] : [...questions, { id: undefined, label: WHAT_IF }]).map(({ id, label }) => (
             <button key={label} type="button" onClick={() => send(label, id)}
               className="rounded-full border border-line px-2 py-0.5 text-left text-[11px] text-ink-2 hover:border-accent/60 hover:text-accent">
               {label}

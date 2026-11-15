@@ -99,10 +99,11 @@ const ACTION_LABEL = {
 };
 const RISK_STYLE = { HIGH: "text-red", ELEVATED: "text-amber", LOW: "text-ok" };
 
-export default function AgentPanel({ inv, event, events, investigations, onSelectEvent, onStart, onOpenReport, onDecided, llmAvailable, thresholds }: {
+export default function AgentPanel({ inv, event, events, investigations, onSelectEvent, onStart, onOpenReport, onDecided, llmAvailable, thresholds, onShowManeuver }: {
   inv: Investigation | null; event: CloseEvent | null; onStart: (eventId: string) => void; onOpenReport: () => void;
   events: CloseEvent[]; investigations: MissionState["investigations"]; onSelectEvent: (id: string) => void;
   onDecided: () => void; llmAvailable: boolean; thresholds?: MissionState["thresholds_km"];
+  onShowManeuver?: (investigationId: string, maneuverId: string) => void;
 }) {
   const details = useRef<HTMLDetailsElement>(null);
   const [operator, setOperator] = useState("");
@@ -322,7 +323,7 @@ export default function AgentPanel({ inv, event, events, investigations, onSelec
       <h2 className="px-1 text-base font-semibold">Agent Group Chat</h2>
       {event && (event.severity === "RED" || event.severity === "AMBER") && (
         <EventQuestions key={event.scenario_id} event={event} events={events} investigations={investigations} onSelectEvent={onSelectEvent} investigation={inv} thresholds={thresholds}
-          options={comparison?.options ?? []} optionId={featured} onEvidence={(id) => {
+          options={comparison?.options ?? []} optionId={featured} onShowManeuver={onShowManeuver} onEvidence={(id) => {
             if (details.current) details.current.open = true;
             document.getElementById(id)?.scrollIntoView({ block: "nearest", inline: "nearest" });
           }} />
