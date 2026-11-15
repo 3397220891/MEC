@@ -23,7 +23,7 @@ const KIND_COLOR: Record<SatObject["kind"], string> = {
 const SEV_COLOR = { RED: "#f87171", AMBER: "#fbbf24", WATCH: "#93c5fd" } as const;
 
 interface Props {
-  traj: Trajectories;
+  traj: Trajectories | null;
   objects: SatObject[];
   selectedId: string | null;
   onSelect: (id: string) => void;
@@ -210,16 +210,16 @@ export default function Globe({ traj, objects, selectedId, onSelect, event }: Pr
   const many = objects.length > 40;
   const involved = new Set(event ? [event.primary_id, event.secondary_id] : []);
   return (
-    <Canvas camera={{ position: [0, 9, 22], fov: 45, near: 0.01, far: 2000 }} dpr={[1, 2]} gl={{ antialias: true }}>
+    <Canvas camera={{ position: [0, 8, 20], fov: 45, near: 0.01, far: 2000 }} dpr={[1, 1.75]} gl={{ antialias: true }} fallback={<div className="mission-globe-fallback" role="status">3D view requires WebGL</div>}>
       <color attach="background" args={["#03070e"]} />
-      <ClockDriver />
+      {traj && <ClockDriver />}
       <ambientLight intensity={0.55} />
       <directionalLight position={[30, 12, 20]} intensity={2.1} />
       <Stars radius={300} depth={60} count={4000} factor={6} fade speed={0.3} />
       <Suspense fallback={<FallbackEarth />}>
-        <Earth gmst0={traj.gmst0_rad} />
+        <Earth gmst0={traj?.gmst0_rad ?? 0} />
       </Suspense>
-      {objects.map((o) => {
+      {traj && objects.map((o) => {
         const isEvent = involved.has(o.id);
         const isSel = o.id === selectedId;
         const color = isEvent && event ? SEV_COLOR[event.severity] : KIND_COLOR[o.kind];
@@ -247,7 +247,7 @@ export default function Globe({ traj, objects, selectedId, onSelect, event }: Pr
           </group>
         );
       })}
-      {event && <Encounter traj={traj} event={event} />}
+      {traj && event && <Encounter traj={traj} event={event} />}
       <OrbitControls enablePan={false} minDistance={8} maxDistance={70} rotateSpeed={0.5} zoomSpeed={0.7} />
     </Canvas>
   );

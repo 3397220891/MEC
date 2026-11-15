@@ -77,8 +77,11 @@ SCENARIOS: dict[str, ScenarioDef] = {
     "maneuver": ScenarioDef(
         "maneuver",
         "3 · Maneuver Evaluation",
-        "A defunct satellite is predicted to pass ~130 m from OGX-3 KESTREL in about 3 h. The agent runs a maneuver trade study.",
-        [EngineeredEncounter("ORION-9 (DEFUNCT)", "PAYLOAD", "OGX-3 KESTREL", 11100.0, (0.065, 0.025, 0.105), 71.0)],
+        "Two simulated alerts: a defunct satellite near KESTREL and a debris fragment near VEGA.",
+        [
+            EngineeredEncounter("ORION-9 (DEFUNCT)", "PAYLOAD", "OGX-3 KESTREL", 11100.0, (0.065, 0.025, 0.105), 71.0),
+            EngineeredEncounter("DEB FRAG-5021", "DEBRIS", "OGX-2 VEGA", 16200.0, (0.85, 0.30, 1.40), 97.6),
+        ],
     ),
 }
 

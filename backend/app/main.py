@@ -32,7 +32,16 @@ def _auto_investigate(mission) -> list[str]:
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
     db.conn()
-    STORE.load("nominal")
+    mission = STORE.load("maneuver")
+    for event in mission.events:
+        if event["severity"] not in ("RED", "AMBER"):
+            continue
+        latest = db.query_one(
+            "SELECT status FROM investigations WHERE event_id = ? ORDER BY started_at DESC LIMIT 1",
+            (event["id"],),
+        )
+        if not latest or latest["status"] != "awaiting_approval":
+            runner.start_investigation(event["id"], trigger="auto-monitor")
     log.info("OrbitalGuard ready. LLM agent configured: %s", config.llm_configured())
     yield
 
