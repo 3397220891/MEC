@@ -15,6 +15,7 @@ from .agent import chat, runner
 from .physics import maneuver as mnv
 from .physics.propagation import state, states
 from .physics.screening import separation_series
+from .services import plan
 from .services.state import SCENARIO_LIST, STORE
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
@@ -181,6 +182,18 @@ def get_investigation(inv_id: str):
     inv["steps"] = db.query("SELECT idx, kind, tool, input, output, evidence_id, status, duration_ms, created_at FROM steps WHERE investigation_id = ? ORDER BY idx", (inv_id,))
     inv["maneuvers"] = [r["data"] for r in db.query("SELECT data FROM maneuvers WHERE investigation_id = ? ORDER BY created_at", (inv_id,))]
     return inv
+
+
+@app.get("/api/investigations/{inv_id}/plan")
+def maneuver_plan(inv_id: str, maneuver_id: str | None = None, step_s: float = Query(60.0, ge=10, le=600)):
+    """All simulated options (burn points at T−N) and the maneuvered path of the recommended (or given) option."""
+    inv = db.query_one("SELECT * FROM investigations WHERE id = ?", (inv_id,))
+    if inv is None:
+        raise HTTPException(404, "investigation not found")
+    try:
+        return plan.build_plan(_mission(), inv, maneuver_id, step_s)
+    except plan.PlanError as e:
+        raise HTTPException(409, str(e))
 
 
 @app.post("/api/investigations/{inv_id}/decision")

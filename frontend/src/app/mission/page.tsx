@@ -11,7 +11,7 @@ import TimelineBar from "@/components/TimelineBar";
 import { api } from "@/lib/api";
 import { clock, seek } from "@/lib/clock";
 import "../mission.css";
-import type { Investigation, MissionState, Trajectories } from "@/lib/types";
+import type { Investigation, ManeuverPlan, MissionState, Trajectories } from "@/lib/types";
 
 const Globe = dynamic(() => import("@/components/Globe"), {
   ssr: false,
@@ -31,6 +31,7 @@ export default function MissionPage() {
   const catalog = useRef<HTMLDialogElement>(null);
   const [demoCallsign, setDemoCallsign] = useState<string | null>(null);
   const [reportOpen, setReportOpen] = useState(false);
+  const [plan, setPlan] = useState<ManeuverPlan | null>(null);
 
   const refreshState = useCallback(async () => {
     try {
@@ -85,6 +86,15 @@ export default function MissionPage() {
     () => state?.investigations.filter((i) => i.event_id === activeEventId).sort((a, b) => b.started_at.localeCompare(a.started_at))[0]?.id ?? null,
     [state, activeEventId],
   );
+
+  // Once the agent has finished, fetch its maneuver plan (burn points at T−N + maneuvered path) for the globe.
+  const planKey = inv && inv.status !== "queued" && inv.status !== "running" && inv.recommendation ? inv.id : null;
+  useEffect(() => {
+    if (!planKey) return setPlan(null);
+    let live = true;
+    api.plan(planKey).then((p) => live && setPlan(p)).catch(() => live && setPlan(null));
+    return () => { live = false; };
+  }, [planKey]);
 
   const pollInv = useCallback(async () => {
     if (!activeInvId) return setInv(null);
@@ -152,7 +162,7 @@ export default function MissionPage() {
 
       <section className="mission-stage" aria-label="Mission control">
         <div className="mission-scene" aria-label="Interactive orbital view">
-          <Globe traj={traj} objects={state?.objects ?? []} selectedId={selectedId} onSelect={selectObject} event={activeEvent} />
+          <Globe traj={traj} objects={state?.objects ?? []} selectedId={selectedId} onSelect={selectObject} event={activeEvent} plan={plan} />
         </div>
 
         <TrackingSummary

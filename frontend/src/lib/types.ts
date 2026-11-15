@@ -165,3 +165,43 @@ export interface ChatReply {
   reason?: string | null;
   check: { unknown_evidence: string[]; unverified_numbers: string[]; grounded: boolean };
 }
+
+export interface PlanOption {
+  maneuver_id: string;
+  direction: string;
+  delta_v_m_s: number;
+  burn_time_s: number;
+  burn_utc: string;
+  burn_lead_time_min: number;
+  burn_position_km: [number, number, number];
+  new_tca_s: number;
+  new_tca_utc: string;
+  new_miss_km: number;
+  new_conjunctions: number;
+  acceptable: boolean;
+  in_comparison: boolean;
+  recommended: boolean;
+  label: string;
+}
+
+export interface ManeuverPlan {
+  investigation_id: string;
+  event_id: string;
+  primary_id: string;
+  secondary_id: string;
+  tca_s: number;
+  baseline_miss_km: number;
+  target_miss_km: number | null;
+  recommended_maneuver_id: string;
+  recommended_action: string | null;
+  decision: string | null;
+  options: PlanOption[];
+  path: {
+    maneuver_id: string;
+    satellite_id: string;
+    step_s: number;
+    n: number;
+    positions: (number | null)[];
+    new_tca_position_km: [number, number, number];
+  } | null;
+}

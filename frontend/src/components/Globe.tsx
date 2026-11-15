@@ -5,7 +5,7 @@ import { Canvas, useFrame, useLoader } from "@react-three/fiber";
 import { Suspense, useEffect, useMemo, useRef } from "react";
 import * as THREE from "three";
 import { clock, OMEGA_EARTH, positionAt, R_EARTH_KM } from "@/lib/clock";
-import type { CloseEvent, SatObject, Trajectories } from "@/lib/types";
+import type { CloseEvent, ManeuverPlan, SatObject, Trajectories } from "@/lib/types";
 
 const S = 1 / 1000; // 1 scene unit = 1000 km
 const tmp: [number, number, number] = [0, 0, 0];
@@ -28,7 +28,12 @@ interface Props {
   selectedId: string | null;
   onSelect: (id: string) => void;
   event: CloseEvent | null;
+  plan?: ManeuverPlan | null;
 }
+
+const PLAN_COLOR = "#34d399"; // recommended maneuvered path / burn
+const OPTION_COLOR = "#67e8f9"; // other acceptable options
+const REJECTED_COLOR = "#64748b"; // options that miss the target or create new conjunctions
 
 function ClockDriver() {
   useFrame((_, delta) => {
@@ -125,7 +130,7 @@ function Satellite({ traj, obj, color, size, selected, label, onSelect }: {
 }
 
 /** Canvas-texture sprite label (avoids per-label React roots that drei <Html> creates). */
-function Label({ text, y }: { text: string; y: number }) {
+function Label({ text, y, small = false }: { text: string; y: number; small?: boolean }) {
   const { texture, aspect } = useMemo(() => {
     const font = "500 30px Jost, ui-sans-serif, system-ui, sans-serif";
     const c = document.createElement("canvas");
@@ -150,7 +155,7 @@ function Label({ text, y }: { text: string; y: number }) {
     return { texture: tex, aspect: w / 48 };
   }, [text]);
   useEffect(() => () => texture.dispose(), [texture]);
-  const h = 0.32;
+  const h = small ? 0.22 : 0.32;
   return (
     <sprite position={[0, y + h / 2, 0]} scale={[h * aspect, h, 1]} renderOrder={10}>
       <spriteMaterial map={texture} depthTest={false} transparent />
@@ -206,7 +211,78 @@ function Encounter({ traj, event }: { traj: Trajectories; event: CloseEvent }) {
   );
 }
 
-export default function Globe({ traj, objects, selectedId, onSelect, event }: Props) {
+/**
+ * The agent's maneuver plan: burn markers at T−N on the current orbit for every simulated option,
+ * the maneuvered path of the recommended one (from the burn until shortly after the original TCA),
+ * a ghost satellite flying that path, and the new closest-approach point.
+ */
+function ManeuverPlanLayer({ plan }: { plan: ManeuverPlan }) {
+  const path = plan.path;
+  const chosen = plan.options.find((o) => o.maneuver_id === path?.maneuver_id) ?? null;
+  // Wrap the path in the Trajectories shape so positionAt() can interpolate it like any other object.
+  const pathTraj = useMemo<Trajectories | null>(() => path && ({
+    epoch_utc: "", gmst0_rad: 0, step_s: path.step_s, n: path.n, positions: { [path.satellite_id]: path.positions },
+  }), [path]);
+  const points = useMemo(() => {
+    if (!pathTraj || !path || !chosen) return [];
+    const end = Math.min((path.n - 1) * path.step_s, Math.max(plan.tca_s, chosen.new_tca_s) + 1200);
+    const pts: THREE.Vector3[] = [];
+    const p: [number, number, number] = [0, 0, 0];
+    for (let t = chosen.burn_time_s; t <= end; t += path.step_s / 2) {
+      if (positionAt(pathTraj, path.satellite_id, t, p)) pts.push(toScene(p, new THREE.Vector3()));
+    }
+    return pts;
+  }, [pathTraj, path, chosen, plan.tca_s]);
+  const ghost = useRef<THREE.Group>(null);
+  useFrame(() => {
+    if (!ghost.current || !pathTraj || !path || !chosen) return;
+    const p: [number, number, number] = [0, 0, 0];
+    const on = clock.t >= chosen.burn_time_s && positionAt(pathTraj, path.satellite_id, clock.t, p);
+    ghost.current.visible = on;
+    if (on) toScene(p, ghost.current.position);
+  });
+  const others = plan.options.filter((o) => o.maneuver_id !== chosen?.maneuver_id);
+  return (
+    <group>
+      {points.length > 1 && <Line points={points} color={PLAN_COLOR} lineWidth={2.4} dashed dashSize={0.12} gapSize={0.06} />}
+      {others.map((o) => (
+        <group key={o.maneuver_id} position={toScene(o.burn_position_km, new THREE.Vector3())}>
+          <mesh>
+            <sphereGeometry args={[o.acceptable ? 0.045 : 0.03, 10, 10]} />
+            <meshBasicMaterial color={o.acceptable ? OPTION_COLOR : REJECTED_COLOR} />
+          </mesh>
+          {o.acceptable && <Label text={`${o.maneuver_id} · ${o.label}`} y={0.12} small />}
+        </group>
+      ))}
+      {chosen && (
+        <group position={toScene(chosen.burn_position_km, new THREE.Vector3())}>
+          <mesh>
+            <octahedronGeometry args={[0.09, 0]} />
+            <meshBasicMaterial color={PLAN_COLOR} />
+          </mesh>
+          <Label text={`BURN ${chosen.maneuver_id} · ${chosen.label}`} y={0.2} />
+        </group>
+      )}
+      {chosen && path && (
+        <group position={toScene(path.new_tca_position_km, new THREE.Vector3())}>
+          <mesh>
+            <sphereGeometry args={[0.05, 12, 12]} />
+            <meshBasicMaterial color={PLAN_COLOR} transparent opacity={0.7} />
+          </mesh>
+          <Label text={`new miss ${chosen.new_miss_km.toFixed(2)} km`} y={0.14} small />
+        </group>
+      )}
+      <group ref={ghost} visible={false}>
+        <mesh>
+          <sphereGeometry args={[0.07, 12, 12]} />
+          <meshBasicMaterial color={PLAN_COLOR} transparent opacity={0.55} />
+        </mesh>
+      </group>
+    </group>
+  );
+}
+
+export default function Globe({ traj, objects, selectedId, onSelect, event, plan }: Props) {
   const many = objects.length > 40;
   const involved = new Set(event ? [event.primary_id, event.secondary_id] : []);
   return (
@@ -248,6 +324,7 @@ export default function Globe({ traj, objects, selectedId, onSelect, event }: Pr
         );
       })}
       {traj && event && <Encounter traj={traj} event={event} />}
+      {traj && plan && event && plan.event_id === event.id && <ManeuverPlanLayer plan={plan} />}
       <OrbitControls enablePan={false} minDistance={8} maxDistance={70} rotateSpeed={0.5} zoomSpeed={0.7} />
     </Canvas>
   );
