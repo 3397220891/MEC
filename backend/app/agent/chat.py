@@ -121,6 +121,13 @@ def check_answer(answer: str, cited: list[str], ctx: dict, evidence: dict) -> di
     source = {"event": ctx.get("event"), "thresholds": ctx.get("thresholds"), "alerts": ctx.get("alerts"),
               "cited": [evidence[c]["output"] for c in cited if c in evidence]}
     leaves = _leaves(source, [])
+    # Numbers written inside recommendation text (headline, rationale) were already validated against the
+    # evidence when the investigation finished, so restating them is grounded too.
+    recs = [a.get("headline") for a in ctx.get("alerts") or []]
+    rec = (ctx.get("investigation") or {}).get("recommendation") or {}
+    recs += [rec.get("headline")] + [c.get("claim") for c in rec.get("rationale") or []]
+    for text in filter(None, recs):
+        leaves += [float(n) for n in _NUM.findall(_TIMESTAMP.sub(" ", text))]
     unverified = []
     for m in _NUM.finditer(_TIMESTAMP.sub(" ", answer)):
         txt = m.group(1)

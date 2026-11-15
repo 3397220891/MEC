@@ -99,3 +99,11 @@ def test_running_investigation_does_not_hide_finished_one(mission):
     ctx, evidence = chat.build_context(mission, ev)
     assert ctx["newer_investigation_in_progress"]["id"] == "INV-NEW"
     assert ctx["investigation"]["id"] == "INV-T0" and evidence
+
+
+def test_numbers_restated_from_validated_recommendation_text_are_grounded(mission):
+    ctx, evidence = chat.build_context(mission, None)
+    headline = "a 0.20 m/s prograde burn (M9) raises the predicted miss to 3.48 km"
+    ctx["alerts"][0]["headline"] = headline
+    assert chat.check_answer("Option M9 is 0.20 m/s for 3.48 km.", [], ctx, evidence)["grounded"]
+    assert chat.check_answer("Option M9 is 0.20 m/s for 7777.7 km.", [], ctx, evidence)["unverified_numbers"] == ["7777.7"]
