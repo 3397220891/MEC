@@ -1,13 +1,15 @@
 "use client";
 
 import dynamic from "next/dynamic";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import AgentPanel from "@/components/AgentPanel";
+import { OrbitalReadings, TrackingSummary } from "@/components/MissionReadings";
 import ObjectPanel from "@/components/ObjectPanel";
 import ReportModal from "@/components/ReportModal";
 import TimelineBar from "@/components/TimelineBar";
 import { api } from "@/lib/api";
 import { clock, seek } from "@/lib/clock";
+import "./mission.css";
 import type { Investigation, MissionState, Scenario, Trajectories } from "@/lib/types";
 
 const Globe = dynamic(() => import("@/components/Globe"), {
@@ -26,6 +28,7 @@ export default function Home() {
   const [inv, setInv] = useState<Investigation | null>(null);
   const [loading, setLoading] = useState<string | null>("Connecting to mission backend…");
   const [error, setError] = useState<string | null>(null);
+  const catalog = useRef<HTMLDialogElement>(null);
   const [reportOpen, setReportOpen] = useState(false);
 
   const refreshState = useCallback(async () => {
@@ -60,7 +63,7 @@ export default function Home() {
 
   useEffect(() => {
     api.scenarios().then(setScenarios).catch(() => undefined);
-    loadAll().finally(() => setLoading(null));
+    loadAll().catch((e: Error) => setError(e.message)).finally(() => setLoading(null));
   }, [loadAll]);
 
   async function loadScenario(id: string) {
@@ -115,14 +118,23 @@ export default function Home() {
 
   const dataLabel = state?.data.source === "SIMULATED" ? "SIMULATED DATA" : state ? `REAL DATA · ${state.data.source}` : "";
 
+  const selected = state?.objects.find((object) => object.id === selectedId) ?? null;
+  function selectObject(id: string) {
+    setSelectedId(id);
+    const included = (event: NonNullable<typeof activeEvent>) => event.primary_id === id || event.secondary_id === id;
+    if (activeEvent && included(activeEvent)) return;
+    const next = state?.events.filter(included)
+      .sort((a, b) => SEV_RANK[a.severity] - SEV_RANK[b.severity] || a.tca_s - b.tca_s)[0];
+    setActiveEventId(next?.id ?? null);
+  }
+
   return (
-    <main className="grid h-screen grid-rows-[auto_1fr_auto] gap-3 p-3">
-      <header className="panel flex flex-wrap items-center gap-3 px-4 py-2">
+    <main className="mission">
+      <header className="mission-header">
         <div className="flex items-center gap-2">
           <span className="grid h-8 w-8 place-items-center rounded-full border border-accent/60 text-accent">◎</span>
           <div className="leading-tight">
-            <div className="text-base font-semibold tracking-wide">OrbitalGuard AI</div>
-            <div className="text-[11px] text-muted">Collision risk investigation &amp; decision support</div>
+            <h1 className="text-xl font-semibold tracking-tight">OrbitalGuard AI</h1>
           </div>
         </div>
         <nav className="ml-4 flex flex-wrap gap-1" aria-label="Scenarios">
@@ -146,72 +158,71 @@ export default function Home() {
         </div>
       </header>
 
-      <div className="grid min-h-0 grid-cols-[300px_1fr_420px] gap-3">
-        <ObjectPanel objects={state?.objects ?? []} events={state?.events ?? []} traj={traj} selectedId={selectedId} onSelect={setSelectedId} />
+      <section className="mission-stage" aria-label="Mission control">
+        <div className="mission-scene" aria-label="Interactive orbital view">
+          <Globe traj={traj} objects={state?.objects ?? []} selectedId={selectedId} onSelect={selectObject} event={activeEvent} />
+        </div>
 
-        <section className="panel relative min-h-0 overflow-hidden">
-          {traj && state ? (
-            <Globe traj={traj} objects={state.objects} selectedId={selectedId} onSelect={setSelectedId} event={activeEvent} />
-          ) : (
-            <div className="grid h-full place-items-center text-sm text-muted">{error ? "Backend unavailable" : "Loading orbital data…"}</div>
+        <TrackingSummary
+          tracked={state?.objects.filter((object) => object.kind === "PAYLOAD").length}
+          alerts={state?.events.length}
+        />
+
+        <div className="mission-left">
+          <button type="button" className="mission-card mission-catalog" onClick={() => catalog.current?.showModal()}>
+            <span>{selected?.name ?? "Tracked objects"}</span>
+            <span className="mission-reading-note">{selected ? `${selected.id} · Browse objects` : "Browse objects"}</span>
+            <span className="mission-catalog-arrow" aria-hidden="true">&#x2197;&#xFE0E;</span>
+          </button>
+          <OrbitalReadings satellite={selected} trajectory={traj} event={activeEvent} />
+        </div>
+
+        <div className="mission-right">
+          <AgentPanel
+            inv={inv?.event_id === activeEventId ? inv : null}
+            event={activeEvent}
+            onStart={startInvestigation}
+            onOpenReport={() => setReportOpen(true)}
+            onDecided={() => {
+              pollInv();
+              refreshState();
+            }}
+            llmAvailable={state?.llm_available ?? false}
+          />
+        </div>
+
+        <div className="mission-bottom">
+          {(loading || error) && (
+            <p className="mission-status mission-card" role={error && !loading ? "alert" : "status"}>
+              {loading ?? error}
+            </p>
           )}
           {state && (
-            <div className="pointer-events-none absolute left-3 top-3 space-y-1">
-              <div className="tile px-3 py-1.5 text-xs">
-                <div className="label">Scenario</div>
-                <div className="font-semibold">{state.title}</div>
-                <div className="text-muted">Epoch {state.epoch_utc.slice(0, 16).replace("T", " ")}Z · horizon {(state.horizon_s / 3600).toFixed(0)} h · screen &lt; {state.thresholds_km.screen} km</div>
-              </div>
-            </div>
+            <TimelineBar
+              horizon={state.horizon_s}
+              epoch={state.epoch_utc}
+              events={state.events}
+              investigations={state.investigations}
+              activeEventId={activeEventId}
+              onSelectEvent={(id) => {
+                setActiveEventId(id);
+                const event = state.events.find((item) => item.id === id);
+                if (event) setSelectedId(event.primary_id);
+              }}
+            />
           )}
-          {activeEvent && (
-            <div className={`pointer-events-none absolute right-3 top-3 tile px-3 py-1.5 text-xs ${activeEvent.severity === "RED" ? "alert-pulse border-red/60" : ""}`}>
-              <div className={`label ${activeEvent.severity === "RED" ? "text-red" : activeEvent.severity === "AMBER" ? "text-amber" : "text-watch"}`}>
-                {activeEvent.severity === "RED" ? "▲" : activeEvent.severity === "AMBER" ? "◆" : "●"} Close approach · {activeEvent.severity}
-              </div>
-              <div className="text-2xl font-semibold tabular-nums">{activeEvent.miss_km.toFixed(3)}<span className="ml-1 text-xs text-ink-2">km</span></div>
-              <div className="text-muted">TCA {activeEvent.tca_utc.slice(11, 19)}Z</div>
-            </div>
-          )}
-          {loading && <div className="absolute inset-0 grid place-items-center bg-black/50 text-sm text-ink-2">{loading}</div>}
-          {error && !loading && (
-            <div className="absolute bottom-3 left-1/2 -translate-x-1/2 rounded-lg border border-red/50 bg-red/15 px-3 py-1.5 text-xs text-red" role="alert">
-              {error}
-            </div>
-          )}
-        </section>
+        </div>
+      </section>
 
-        <AgentPanel
-          inv={inv}
-          event={activeEvent}
-          onStart={startInvestigation}
-          onOpenReport={() => setReportOpen(true)}
-          onDecided={() => {
-            pollInv();
-            refreshState();
-          }}
-          llmAvailable={state?.llm_available ?? false}
-        />
-      </div>
+      <dialog ref={catalog} className="mission-dialog" aria-labelledby="catalog-title">
+        <div className="mission-dialog-header">
+          <h2 id="catalog-title">Object catalog</h2>
+          <form method="dialog"><button className="mission-close" aria-label="Close object catalog">×</button></form>
+        </div>
+        <ObjectPanel objects={state?.objects ?? []} events={state?.events ?? []} traj={traj} selectedId={selectedId} onSelect={selectObject} />
+      </dialog>
 
-      <div className="h-40">
-        {state && (
-          <TimelineBar
-            horizon={state.horizon_s}
-            epoch={state.epoch_utc}
-            events={state.events}
-            investigations={state.investigations}
-            activeEventId={activeEventId}
-            onSelectEvent={(id) => {
-              setActiveEventId(id);
-              const ev = state.events.find((e) => e.id === id);
-              if (ev) setSelectedId(ev.primary_id);
-            }}
-          />
-        )}
-      </div>
-
-      {reportOpen && inv && <ReportModal inv={inv} onClose={() => setReportOpen(false)} />}
+      {reportOpen && inv && inv.event_id === activeEventId && <ReportModal inv={inv} onClose={() => setReportOpen(false)} />}
     </main>
   );
 }

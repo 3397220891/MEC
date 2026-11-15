@@ -25,9 +25,9 @@ export default function TimelineBar({ horizon, epoch, events, investigations, ac
   const pct = (x: number) => `${(100 * x) / horizon}%`;
 
   return (
-    <section className="panel grid min-h-0 grid-cols-[1fr_380px] gap-4 p-3">
+    <section className="panel mission-timeline grid min-h-0 gap-3 p-3">
       <div className="flex min-w-0 flex-col gap-2">
-        <div className="flex items-center gap-3">
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
           <h2 className="text-sm font-semibold">Mission timeline</h2>
           <span className="font-mono text-sm tabular-nums text-ink">{utcAt(epoch, t)} UTC</span>
           <span className="font-mono text-xs tabular-nums text-muted">{fmtDuration(t)}</span>
@@ -56,15 +56,24 @@ export default function TimelineBar({ horizon, epoch, events, investigations, ac
             const r = e.currentTarget.getBoundingClientRect();
             seek(((e.clientX - r.left) / r.width) * horizon);
           }}
+          onKeyDown={(e) => {
+            if (e.target !== e.currentTarget) return;
+            const target = { ArrowLeft: t - 60, ArrowRight: t + 60, Home: 0, End: horizon }[e.key];
+            if (target === undefined) return;
+            e.preventDefault();
+            seek(target);
+          }}
+          tabIndex={0}
           role="slider"
           aria-label="Simulation time"
           aria-valuemin={0}
           aria-valuemax={horizon}
           aria-valuenow={Math.round(t)}
+          aria-valuetext={fmtDuration(t)}
         >
           {Array.from({ length: hours + 1 }, (_, h) => (
             <div key={h} className="absolute top-0 h-full border-l border-line" style={{ left: pct(h * 3600) }}>
-              <span className="absolute bottom-0.5 left-1 text-[10px] text-muted">T+{h}h</span>
+              <span className={`absolute bottom-0.5 whitespace-nowrap text-[10px] text-muted ${h * 3600 === horizon ? "right-1" : "left-1"}`}>T+{h}h</span>
             </div>
           ))}
           {events.map((e) => (
@@ -91,7 +100,7 @@ export default function TimelineBar({ horizon, epoch, events, investigations, ac
           <h2 className="text-sm font-semibold">Close-approach alerts</h2>
           <span className="label">{events.length} flagged</span>
         </div>
-        <ul className="scroll-thin min-h-0 flex-1 space-y-1 overflow-y-auto pr-1">
+        <ul className="scroll-thin max-h-16 min-h-0 flex-1 space-y-1 overflow-y-auto pr-1">
           {events.length === 0 && <li className="text-xs text-muted">No objects inside the screening volume. Nominal operations.</li>}
           {events.map((e) => {
             const inv = investigations.find((i) => i.event_id === e.id);
