@@ -1,9 +1,10 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { api } from "@/lib/api";
-import type { CloseEvent, ComparisonRow, Investigation, Separation, Step } from "@/lib/types";
+import type { CloseEvent, ComparisonRow, Investigation, MissionState, Separation, Step } from "@/lib/types";
+import EventQuestions from "./EventQuestions";
 import SeparationChart from "./SeparationChart";
 
 const TOOL_ICON: Record<string, string> = {
@@ -98,10 +99,12 @@ const ACTION_LABEL = {
 };
 const RISK_STYLE = { HIGH: "text-red", ELEVATED: "text-amber", LOW: "text-ok" };
 
-export default function AgentPanel({ inv, event, onStart, onOpenReport, onDecided, llmAvailable }: {
+export default function AgentPanel({ inv, event, events, investigations, onSelectEvent, onStart, onOpenReport, onDecided, llmAvailable, thresholds }: {
   inv: Investigation | null; event: CloseEvent | null; onStart: (eventId: string) => void; onOpenReport: () => void;
-  onDecided: () => void; llmAvailable: boolean;
+  events: CloseEvent[]; investigations: MissionState["investigations"]; onSelectEvent: (id: string) => void;
+  onDecided: () => void; llmAvailable: boolean; thresholds?: MissionState["thresholds_km"];
 }) {
+  const details = useRef<HTMLDetailsElement>(null);
   const [operator, setOperator] = useState("");
   const [note, setNote] = useState("");
   const [busy, setBusy] = useState(false);
@@ -148,13 +151,9 @@ export default function AgentPanel({ inv, event, onStart, onOpenReport, onDecide
   }
 
   return (
+    <>
     <aside className="panel flex min-h-0 flex-col p-3">
-      <div className="flex items-center gap-2">
-        <h2 className="text-sm font-semibold">AI collision investigation</h2>
-        <span className={`ml-auto rounded px-1.5 py-0.5 text-[10px] font-semibold ${llmAvailable ? "bg-ok/15 text-ok" : "bg-amber/15 text-amber"}`}>
-          {llmAvailable ? "● CLAUDE AGENT" : "◆ FALLBACK PLANNER"}
-        </span>
-      </div>
+      <h2 className="px-1 text-base font-semibold">Collision Assistant</h2>
 
       {!event && (
         <div className="mt-6 text-center text-sm text-muted">
@@ -165,149 +164,181 @@ export default function AgentPanel({ inv, event, onStart, onOpenReport, onDecide
       )}
 
       {event && (
-        <div className="mt-2 rounded-lg border border-line bg-panel-2/60 p-2 text-xs">
-          <div className="flex items-center gap-2">
-            <span className="font-mono text-ink">{event.id}</span>
-            <span className={`font-semibold ${event.severity === "RED" ? "text-red" : event.severity === "AMBER" ? "text-amber" : "text-watch"}`}>
-              {event.severity === "RED" ? "▲" : event.severity === "AMBER" ? "◆" : "●"} {event.severity}
-            </span>
-            <span className="ml-auto text-muted">{event.data_label}</span>
-          </div>
-          <div className="mt-1 text-ink-2">{event.primary_name} × {event.secondary_name}</div>
-          <div className="mt-1 grid grid-cols-3 gap-2">
-            <div><div className="label">Miss</div><div className="text-lg font-semibold tabular-nums">{event.miss_km.toFixed(3)}<span className="ml-0.5 text-[10px] text-ink-2">km</span></div></div>
-            <div><div className="label">Rel. speed</div><div className="text-lg font-semibold tabular-nums">{event.rel_speed_km_s.toFixed(2)}<span className="ml-0.5 text-[10px] text-ink-2">km/s</span></div></div>
-            <div><div className="label">TCA</div><div className="text-lg font-semibold tabular-nums">{event.tca_utc.slice(11, 19)}<span className="ml-0.5 text-[10px] text-ink-2">Z</span></div></div>
-          </div>
-          {!inv && (
-            <button onClick={() => onStart(event.id)} className="mt-2 w-full rounded-md bg-accent/90 py-1.5 text-xs font-semibold text-black hover:bg-accent">
-              Start investigation
-            </button>
+        <details ref={details} className="mt-2 rounded-lg border border-line bg-panel-2/50 p-2">
+          <summary className="cursor-pointer text-xs text-ink-2">
+            <span className="font-medium text-ink">Investigation details</span>
+            <span className="ml-2 font-mono text-muted">{event.id}</span>
+          </summary>
+          <div className="scroll-thin max-h-72 overflow-y-auto overflow-x-hidden">
+            <div className="mt-2 text-xs text-muted">{llmAvailable ? "AI agent available" : "Rule-based planner"}</div>
+            <div id="event-screening-details" className="mt-2 rounded-lg border border-line bg-panel-2/60 p-2 text-xs">
+              <div className="flex items-center gap-2">
+                <span className="font-mono text-ink">{event.id}</span>
+                <span className={`font-semibold ${event.severity === "RED" ? "text-red" : event.severity === "AMBER" ? "text-amber" : "text-watch"}`}>
+                  {event.severity === "RED" ? "▲" : event.severity === "AMBER" ? "◆" : "●"} {event.severity}
+                </span>
+                <span className="ml-auto text-muted">{event.data_label}</span>
+              </div>
+              <div className="mt-1 text-ink-2">{event.primary_name} × {event.secondary_name}</div>
+              <div className="mt-1 grid grid-cols-3 gap-2">
+                <div><div className="label">Miss</div><div className="text-lg font-semibold tabular-nums">{event.miss_km.toFixed(3)}<span className="ml-0.5 text-[10px] text-ink-2">km</span></div></div>
+                <div><div className="label">Rel. speed</div><div className="text-lg font-semibold tabular-nums">{event.rel_speed_km_s.toFixed(2)}<span className="ml-0.5 text-[10px] text-ink-2">km/s</span></div></div>
+                <div><div className="label">TCA</div><div className="text-lg font-semibold tabular-nums">{event.tca_utc.slice(11, 19)}<span className="ml-0.5 text-[10px] text-ink-2">Z</span></div></div>
+              </div>
+              {!inv && (
+                <button onClick={() => onStart(event.id)} className="mt-2 w-full rounded-md bg-accent/90 py-1.5 text-xs font-semibold text-black hover:bg-accent">
+                  Start investigation
+                </button>
+              )}
+            </div>
+          {inv && (
+            <div className="mt-3 space-y-3">
+              <div className="flex items-center gap-2 text-xs">
+                <span className="font-mono">{inv.id}</span>
+                <span className={`rounded px-1.5 py-0.5 text-[10px] font-semibold ${STATUS_STYLE[inv.status]}`}>{inv.status.replace("_", " ").toUpperCase()}</span>
+                <span className="text-muted">{inv.mode === "llm" ? inv.model : inv.mode === "llm+fallback" ? "Claude → fallback" : "deterministic planner"}</span>
+                <span className="ml-auto text-muted">{toolCount} tool calls</span>
+              </div>
+
+              <ol className="space-y-1.5">
+                {steps.map((s) => <StepRow key={s.idx} s={s} />)}
+                {running && <li className="animate-pulse text-xs text-watch">● Agent is working…</li>}
+              </ol>
+
+              {inv.status === "failed" && <div className="rounded-lg border border-red/40 bg-red/10 p-2 text-xs text-red">Investigation failed: {inv.error}</div>}
+
+              {rec && (
+                <section className="rounded-xl border border-line-strong bg-panel-2/80 p-3">
+                  <div className="label">Recommendation · for human review</div>
+                  <h3 className="mt-1 text-base font-semibold leading-snug">{rec.headline}</h3>
+                  <div className="mt-1 flex flex-wrap gap-2 text-xs">
+                    <span className={`font-semibold ${RISK_STYLE[rec.risk_level]}`}>Risk: {rec.risk_level}</span>
+                    <span className="text-ink-2">Action: {ACTION_LABEL[rec.recommended_action]}</span>
+                    {rec.recommended_maneuver_id && <span className="font-mono text-accent">{rec.recommended_maneuver_id}</span>}
+                  </div>
+                  <ul className="mt-2 space-y-1.5">
+                    {(claims.length ? claims : rec.rationale.map((r) => ({ ...r, status: "check" as const, unverified_numbers: [] }))).map((c, i) => (
+                      <li key={i} className="flex gap-2 text-xs leading-relaxed">
+                        <span title={c.status === "verified" ? "All numbers match cited tool output" : `Check: ${c.unverified_numbers.join(", ") || "no evidence cited"}`}
+                          className={c.status === "verified" ? "text-ok" : "text-amber"}>
+                          {c.status === "verified" ? "✔" : "⚠"}
+                        </span>
+                        <span className="text-ink-2">
+                          {c.claim}{" "}
+                          {c.evidence.map((e) => <span key={e} className="ml-0.5 rounded bg-accent/15 px-1 font-mono text-[10px] text-accent">{e}</span>)}
+                        </span>
+                      </li>
+                    ))}
+                  </ul>
+                  {inv.validation && !inv.validation.valid && (
+                    <div className="mt-2 rounded border border-red/40 bg-red/10 p-1.5 text-[11px] text-red">Validation errors: {inv.validation.errors.join("; ")}</div>
+                  )}
+                  {inv.validation && inv.validation.warnings.length > 0 && (
+                    <div className="mt-2 text-[11px] text-amber">⚠ {inv.validation.warnings.join(" · ")}</div>
+                  )}
+                </section>
+              )}
+
+              {comparison && comparison.options.length > 1 && (
+                <section>
+                  <div id="event-maneuver-comparison" className="label mb-1">Maneuver comparison · target ≥ {comparison.target_miss_km} km</div>
+                  <div className="overflow-x-auto rounded-lg border border-line">
+                    <table className="w-full text-[11px] tabular-nums">
+                      <thead className="bg-panel-2 text-muted">
+                        <tr>
+                          <th className="px-2 py-1 text-left font-medium">Option</th>
+                          <th className="px-2 py-1 text-left font-medium">Burn</th>
+                          <th className="px-2 py-1 text-right font-medium">ΔV m/s</th>
+                          <th className="px-2 py-1 text-right font-medium">Miss km</th>
+                          <th className="px-2 py-1 text-center font-medium">OK</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {comparison.options.map((r) => (
+                          <tr key={r.option_id} className={`border-t border-line ${r.option_id === featured ? "bg-accent/10" : ""}`}>
+                            <td className="px-2 py-1 font-mono">{r.option_id === "NO_MANEUVER" ? "None" : r.option_id}</td>
+                            <td className="px-2 py-1 text-ink-2">{r.direction ? `${r.direction} T−${r.burn_lead_time_min}m` : "—"}</td>
+                            <td className="px-2 py-1 text-right">{r.delta_v_m_s.toFixed(3)}</td>
+                            <td className="px-2 py-1 text-right">{r.predicted_miss_km.toFixed(3)}</td>
+                            <td className="px-2 py-1 text-center">{r.acceptable ? <span className="text-ok">✔</span> : r.new_conjunctions ? <span className="text-amber" title="creates new conjunction">⚠</span> : <span className="text-muted">✕</span>}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </section>
+              )}
+
+              {sep && event && (
+                <SeparationChart
+                  data={sep}
+                  targetKm={comparison?.target_miss_km}
+                  baselineMiss={event.miss_km}
+                  maneuverMiss={inv.maneuvers.find((m) => m.maneuver_id === sep.maneuver_id)?.new_miss_km}
+                />
+              )}
+
+              {inv.report && (
+                <button onClick={onOpenReport} className="w-full rounded-md border border-line-strong py-1.5 text-xs hover:bg-panel-2">
+                  ▤ Open full incident report
+                </button>
+              )}
+
+              {inv.decision && (
+                <section className={`rounded-xl border p-3 text-xs ${inv.decision.decision === "approve" ? "border-ok/40 bg-ok/5" : "border-red/40 bg-red/5"}`}>
+                  <div className="label">Operator decision</div>
+                  <div className="mt-1 font-semibold">{inv.decision.decision === "approve" ? "✔ Approved" : "✕ Rejected"} by {inv.decision.operator}</div>
+                  {inv.decision.note && <div className="text-ink-2">“{inv.decision.note}”</div>}
+                  <div className="mt-1 text-[11px] text-muted">{inv.decision.decided_at} · {inv.decision.effect}</div>
+                </section>
+              )}
+            </div>
           )}
-        </div>
+          </div>
+        </details>
       )}
 
-      {inv && (
-        <div className="scroll-thin mt-2 min-h-0 flex-1 space-y-3 overflow-y-auto pr-1">
-          <div className="flex items-center gap-2 text-xs">
-            <span className="font-mono">{inv.id}</span>
-            <span className={`rounded px-1.5 py-0.5 text-[10px] font-semibold ${STATUS_STYLE[inv.status]}`}>{inv.status.replace("_", " ").toUpperCase()}</span>
-            <span className="text-muted">{inv.mode === "llm" ? inv.model : inv.mode === "llm+fallback" ? "Claude → fallback" : "deterministic planner"}</span>
-            <span className="ml-auto text-muted">{toolCount} tool calls</span>
+      {inv?.status === "awaiting_approval" && (
+        <details className="mt-2 rounded-xl border border-amber/40 bg-amber/5 p-3">
+          <summary className="cursor-pointer text-sm font-semibold text-amber">Review pending decision</summary>
+          <p className="mt-1 text-[11px] text-ink-2">Approving records the decision for audit. OrbitalGuard has no uplink and cannot command any spacecraft.</p>
+          <div className="mt-2 flex gap-2">
+            <input value={operator} onChange={(e) => setOperator(e.target.value)} placeholder="Operator call-sign" maxLength={64}
+              className="w-1/2 rounded-md border border-line bg-panel-2 px-2 py-1 text-xs outline-none focus:border-line-strong" />
+            <input value={note} onChange={(e) => setNote(e.target.value)} placeholder="Note (optional)" maxLength={500}
+              className="w-1/2 rounded-md border border-line bg-panel-2 px-2 py-1 text-xs outline-none focus:border-line-strong" />
           </div>
+          <div className="mt-2 flex gap-2">
+            <button disabled={busy} onClick={() => decide("approve")} className="flex-1 rounded-md bg-ok/85 py-1.5 text-xs font-semibold text-black hover:bg-ok disabled:opacity-50">Approve</button>
+            <button disabled={busy} onClick={() => decide("reject")} className="flex-1 rounded-md border border-red/60 py-1.5 text-xs font-semibold text-red hover:bg-red/10 disabled:opacity-50">Reject</button>
+          </div>
+          {err && <p className="mt-1 text-[11px] text-red">{err}</p>}
+        </details>
+      )}
 
-          <ol className="space-y-1.5">
-            {steps.map((s) => <StepRow key={s.idx} s={s} />)}
-            {running && <li className="animate-pulse text-xs text-watch">● Agent is working…</li>}
-          </ol>
+    </aside>
 
-          {inv.status === "failed" && <div className="rounded-lg border border-red/40 bg-red/10 p-2 text-xs text-red">Investigation failed: {inv.error}</div>}
-
-          {rec && (
-            <section className="rounded-xl border border-line-strong bg-panel-2/80 p-3">
-              <div className="label">Recommendation · for human review</div>
-              <h3 className="mt-1 text-base font-semibold leading-snug">{rec.headline}</h3>
-              <div className="mt-1 flex flex-wrap gap-2 text-xs">
-                <span className={`font-semibold ${RISK_STYLE[rec.risk_level]}`}>Risk: {rec.risk_level}</span>
-                <span className="text-ink-2">Action: {ACTION_LABEL[rec.recommended_action]}</span>
-                {rec.recommended_maneuver_id && <span className="font-mono text-accent">{rec.recommended_maneuver_id}</span>}
-              </div>
-              <ul className="mt-2 space-y-1.5">
-                {(claims.length ? claims : rec.rationale.map((r) => ({ ...r, status: "check" as const, unverified_numbers: [] }))).map((c, i) => (
-                  <li key={i} className="flex gap-2 text-xs leading-relaxed">
-                    <span title={c.status === "verified" ? "All numbers match cited tool output" : `Check: ${c.unverified_numbers.join(", ") || "no evidence cited"}`}
-                      className={c.status === "verified" ? "text-ok" : "text-amber"}>
-                      {c.status === "verified" ? "✔" : "⚠"}
-                    </span>
-                    <span className="text-ink-2">
-                      {c.claim}{" "}
-                      {c.evidence.map((e) => <span key={e} className="ml-0.5 rounded bg-accent/15 px-1 font-mono text-[10px] text-accent">{e}</span>)}
-                    </span>
-                  </li>
-                ))}
-              </ul>
-              {inv.validation && !inv.validation.valid && (
-                <div className="mt-2 rounded border border-red/40 bg-red/10 p-1.5 text-[11px] text-red">Validation errors: {inv.validation.errors.join("; ")}</div>
-              )}
-              {inv.validation && inv.validation.warnings.length > 0 && (
-                <div className="mt-2 text-[11px] text-amber">⚠ {inv.validation.warnings.join(" · ")}</div>
-              )}
-            </section>
-          )}
-
-          {comparison && comparison.options.length > 1 && (
-            <section>
-              <div className="label mb-1">Maneuver comparison · target ≥ {comparison.target_miss_km} km</div>
-              <div className="overflow-x-auto rounded-lg border border-line">
-                <table className="w-full text-[11px] tabular-nums">
-                  <thead className="bg-panel-2 text-muted">
-                    <tr>
-                      <th className="px-2 py-1 text-left font-medium">Option</th>
-                      <th className="px-2 py-1 text-left font-medium">Burn</th>
-                      <th className="px-2 py-1 text-right font-medium">ΔV m/s</th>
-                      <th className="px-2 py-1 text-right font-medium">Miss km</th>
-                      <th className="px-2 py-1 text-center font-medium">OK</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {comparison.options.map((r) => (
-                      <tr key={r.option_id} className={`border-t border-line ${r.option_id === featured ? "bg-accent/10" : ""}`}>
-                        <td className="px-2 py-1 font-mono">{r.option_id === "NO_MANEUVER" ? "None" : r.option_id}</td>
-                        <td className="px-2 py-1 text-ink-2">{r.direction ? `${r.direction} T−${r.burn_lead_time_min}m` : "—"}</td>
-                        <td className="px-2 py-1 text-right">{r.delta_v_m_s.toFixed(3)}</td>
-                        <td className="px-2 py-1 text-right">{r.predicted_miss_km.toFixed(3)}</td>
-                        <td className="px-2 py-1 text-center">{r.acceptable ? <span className="text-ok">✔</span> : r.new_conjunctions ? <span className="text-amber" title="creates new conjunction">⚠</span> : <span className="text-muted">✕</span>}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </section>
-          )}
-
-          {sep && event && (
-            <SeparationChart
-              data={sep}
-              targetKm={comparison?.target_miss_km}
-              baselineMiss={event.miss_km}
-              maneuverMiss={inv.maneuvers.find((m) => m.maneuver_id === sep.maneuver_id)?.new_miss_km}
-            />
-          )}
-
-          {inv.report && (
-            <button onClick={onOpenReport} className="w-full rounded-md border border-line-strong py-1.5 text-xs hover:bg-panel-2">
-              ▤ Open full incident report
+    <aside className="panel flex min-h-0 flex-col p-3" aria-label="Agent Group Chat">
+      <h2 className="px-1 text-base font-semibold">Agent Group Chat</h2>
+      {event && (event.severity === "RED" || event.severity === "AMBER") && (
+        <EventQuestions key={event.scenario_id} event={event} events={events} investigations={investigations} onSelectEvent={onSelectEvent} investigation={inv} thresholds={thresholds}
+          options={comparison?.options ?? []} optionId={featured} onEvidence={(id) => {
+            if (details.current) details.current.open = true;
+            document.getElementById(id)?.scrollIntoView({ block: "nearest", inline: "nearest" });
+          }} />
+      )}
+      {(!event || event.severity === "WATCH") && (
+        <div className="mt-3 space-y-2 px-1 text-xs text-ink-2">
+          <p>Select a RED or AMBER alert to enter the group chat.</p>
+          {events.filter((alert) => alert.severity !== "WATCH").map((alert) => (
+            <button key={alert.id} type="button" onClick={() => onSelectEvent(alert.id)}
+              className="block w-full rounded-md border border-line px-2 py-1.5 text-left hover:border-accent/60">
+              {alert.severity} · {alert.primary_name} × {alert.secondary_name}
             </button>
-          )}
-
-          {inv.status === "awaiting_approval" && (
-            <section className="rounded-xl border border-amber/40 bg-amber/5 p-3">
-              <div className="label text-amber">Human approval checkpoint</div>
-              <p className="mt-1 text-[11px] text-ink-2">Approving records the decision for audit. OrbitalGuard has no uplink and cannot command any spacecraft.</p>
-              <div className="mt-2 flex gap-2">
-                <input value={operator} onChange={(e) => setOperator(e.target.value)} placeholder="Operator call-sign" maxLength={64}
-                  className="w-1/2 rounded-md border border-line bg-panel-2 px-2 py-1 text-xs outline-none focus:border-line-strong" />
-                <input value={note} onChange={(e) => setNote(e.target.value)} placeholder="Note (optional)" maxLength={500}
-                  className="w-1/2 rounded-md border border-line bg-panel-2 px-2 py-1 text-xs outline-none focus:border-line-strong" />
-              </div>
-              <div className="mt-2 flex gap-2">
-                <button disabled={busy} onClick={() => decide("approve")} className="flex-1 rounded-md bg-ok/85 py-1.5 text-xs font-semibold text-black hover:bg-ok disabled:opacity-50">Approve</button>
-                <button disabled={busy} onClick={() => decide("reject")} className="flex-1 rounded-md border border-red/60 py-1.5 text-xs font-semibold text-red hover:bg-red/10 disabled:opacity-50">Reject</button>
-              </div>
-              {err && <p className="mt-1 text-[11px] text-red">{err}</p>}
-            </section>
-          )}
-
-          {inv.decision && (
-            <section className={`rounded-xl border p-3 text-xs ${inv.decision.decision === "approve" ? "border-ok/40 bg-ok/5" : "border-red/40 bg-red/5"}`}>
-              <div className="label">Operator decision</div>
-              <div className="mt-1 font-semibold">{inv.decision.decision === "approve" ? "✔ Approved" : "✕ Rejected"} by {inv.decision.operator}</div>
-              {inv.decision.note && <div className="text-ink-2">“{inv.decision.note}”</div>}
-              <div className="mt-1 text-[11px] text-muted">{inv.decision.decided_at} · {inv.decision.effect}</div>
-            </section>
-          )}
+          ))}
         </div>
       )}
     </aside>
+    </>
   );
 }
