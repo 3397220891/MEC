@@ -1,0 +1,6 @@
+{
+  "source": "CelesTrak GP (groups: stations, visual)",
+  "url": "https://celestrak.org/NORAD/elements/gp.php",
+  "fetched_utc": "2026-11-15T16:53:37Z",
+  "note": "Offline fallback snapshot. Used when live CelesTrak fetch is unavailable."
+}

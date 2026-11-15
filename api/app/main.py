@@ -13,19 +13,34 @@ from fastapi import Depends, FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
+from . import routes
+from .agent.runner import Investigations
+from .db import default_db
 from .llm import LLM, LLMError, providers_from_env
+from .world import World
 
-app = FastAPI(title="MEC kit")
-app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
+_DATA = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data")
+
+app = FastAPI(title="OrbitalGuard AI")
+app.add_middleware(CORSMiddleware, allow_origins=os.getenv("CORS_ORIGINS", "*").split(","),
+                   allow_methods=["*"], allow_headers=["*"])
 
 
 @lru_cache
 def get_llm() -> LLM:
     return LLM(
         providers_from_env(),
-        cache_dir=os.getenv("LLM_CACHE_DIR", "/data/cache"),
-        log_path=os.getenv("LLM_LOG_PATH", "/data/logs/llm.jsonl"),
+        cache_dir=os.getenv("LLM_CACHE_DIR", os.path.join(_DATA, "cache")),
+        log_path=os.getenv("LLM_LOG_PATH", os.path.join(_DATA, "logs", "llm.jsonl")),
     )
+
+
+# OrbitalGuard state: one world (active scenario) + investigation runner. The agent resolves the LLM lazily,
+# so the physics engine and dashboard keep working when no provider is configured or reachable.
+world = World(default_db())
+investigations = Investigations(world, lambda: app.dependency_overrides.get(get_llm, get_llm)())
+routes.init(world, investigations)
+app.include_router(routes.router)
 
 
 class ChatIn(BaseModel):
@@ -55,6 +70,8 @@ def health(llm: LLM = Depends(get_llm)):
         "ok": True,
         "providers": [{"name": p.name, "model": p.model, "vision_model": p.vision_model} for p in llm.providers],
         "cache_entries": len(list(llm.cache_dir.glob("*.json"))),
+        "agent_mode": "llm" if llm.providers else "rule-based (no LLM provider configured)",
+        "scenario": world.scenario_id,
     }
 
 

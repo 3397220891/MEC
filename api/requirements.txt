@@ -6,6 +6,7 @@ python-multipart==0.0.32
 httpx
 pytest
 numpy
+sgp4>=2.23
 pandas
 scipy
 networkx

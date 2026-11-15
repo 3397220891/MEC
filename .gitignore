@@ -1,0 +1,8 @@
+node_modules/
+web/dist/
+__pycache__/
+.pytest_cache/
+.env
+api/data/*.sqlite
+api/data/cache/
+api/data/logs/

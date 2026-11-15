@@ -1,5 +1,5 @@
-"""列出每个服务商当前可用的模型名，用来确认 .env 里的模型名写得对。
-运行：docker compose exec api python -m app.check_models
+"""
+docker compose exec api python -m app.check_models
 """
 from openai import OpenAI
 

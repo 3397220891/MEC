@@ -1,0 +1,22 @@
+services:
+  api:
+    build: ./api
+    env_file: .env
+    environment:
+      ORBITALGUARD_DB: /data/orbitalguard.sqlite
+      LLM_CACHE_DIR: /data/cache
+      LLM_LOG_PATH: /data/logs/llm.jsonl
+    volumes:
+      - ./api:/app
+      - ogdata:/data
+    ports: ["8000:8000"]
+  web:
+    build: ./web
+    environment:
+      API_TARGET: http://api:8000
+    volumes:
+      - ./web/src:/app/src
+    ports: ["5173:5173"]
+    depends_on: [api]
+volumes:
+  ogdata:

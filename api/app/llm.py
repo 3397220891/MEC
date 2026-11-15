@@ -59,6 +59,32 @@ class LLMError(RuntimeError):
     pass
 
 
+@dataclass
+class ToolCall:
+    id: str
+    name: str
+    arguments: str  # raw JSON string as produced by the model; parse + validate before use
+
+
+@dataclass
+class ToolTurn:
+    text: str
+    tool_calls: list[ToolCall]
+    provider: str
+    model: str
+    latency_ms: int
+    cached: bool
+    usage: dict[str, Any] = field(default_factory=dict)
+
+    def assistant_message(self) -> dict[str, Any]:
+        """The assistant message to append to the conversation (OpenAI chat format)."""
+        msg: dict[str, Any] = {"role": "assistant", "content": self.text or ""}
+        if self.tool_calls:
+            msg["tool_calls"] = [{"id": c.id, "type": "function",
+                                  "function": {"name": c.name, "arguments": c.arguments}} for c in self.tool_calls]
+        return msg
+
+
 def providers_from_env() -> list[Provider]:
     """按环境变量组装服务商链。没配 key 的服务商直接跳过。"""
     chain: list[Provider] = []
@@ -154,6 +180,54 @@ class LLM:
                 {"role": "user", "content": f"Your previous answer was rejected: {error}\nFix it and answer again."},
             ]
         raise LLMError(f"output still invalid after {repairs} repairs: {last_error}")
+
+    def chat_tools(
+        self,
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]],
+        *,
+        temperature: float = 0.2,
+        use_cache: bool = True,
+    ) -> ToolTurn:
+        """One function-calling turn (OpenAI `tools` format). Same provider chain, retries, cache and log as chat().
+
+        The cache doubles as a demo replay: tool outputs are deterministic, so re-running a scenario hits the
+        cache turn by turn and the investigation replays even without network.
+        """
+        errors: list[str] = []
+        for p in self.providers:
+            key = self._cache_key(p.name, p.model, [messages, tools], temperature, "tools")
+            if use_cache and (hit := self._cache_get(key)):
+                self._log(p.name, p.model, 0, hit.get("usage", {}), cached=True, ok=True)
+                return ToolTurn(text=hit["text"], tool_calls=[ToolCall(**c) for c in hit["tool_calls"]],
+                                provider=p.name, model=p.model, latency_ms=0, cached=True, usage=hit.get("usage", {}))
+            for attempt in range(self.max_retries + 1):
+                start = time.perf_counter()
+                try:
+                    resp = self._clients[p.name].chat.completions.create(
+                        model=p.model, messages=messages, tools=tools, tool_choice="auto", temperature=temperature)
+                    msg = resp.choices[0].message
+                    calls = [ToolCall(id=tc.id or f"call_{i}", name=tc.function.name,
+                                      arguments=tc.function.arguments or "{}")
+                             for i, tc in enumerate(msg.tool_calls or [])]
+                    usage = _usage_dict(getattr(resp, "usage", None))
+                    latency = int((time.perf_counter() - start) * 1000)
+                    self._cache_put(key, {"text": msg.content or "", "usage": usage,
+                                          "tool_calls": [c.__dict__ for c in calls]})
+                    self._log(p.name, p.model, latency, usage, cached=False, ok=True)
+                    return ToolTurn(text=msg.content or "", tool_calls=calls, provider=p.name, model=p.model,
+                                    latency_ms=latency, cached=False, usage=usage)
+                except RETRYABLE as e:
+                    errors.append(f"{p.name}: {type(e).__name__}")
+                    self._log(p.name, p.model, 0, {}, cached=False, ok=False, error=type(e).__name__)
+                    time.sleep(min(2 ** attempt * 0.5, 4))
+                except APIStatusError as e:
+                    errors.append(f"{p.name}: HTTP {e.status_code}")
+                    self._log(p.name, p.model, 0, {}, cached=False, ok=False, error=f"HTTP {e.status_code}")
+                    if e.status_code < 500:
+                        break
+                    time.sleep(min(2 ** attempt * 0.5, 4))
+        raise LLMError("all providers failed: " + "; ".join(errors or ["no providers configured"]))
 
     # ---------- 内部实现 ----------
 
