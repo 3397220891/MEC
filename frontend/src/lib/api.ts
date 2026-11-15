@@ -1,4 +1,4 @@
-import type { Investigation, MissionState, Scenario, Separation, Trajectories } from "./types";
+import type { ChatReply, ChatTurn, Investigation, MissionState, Scenario, Separation, Trajectories } from "./types";
 
 export class ApiError extends Error {
   constructor(public status: number, message: string) {
@@ -47,6 +47,9 @@ export const api = {
     req<{ investigation_id: string }>("/investigations", { method: "POST", body: JSON.stringify({ event_id: eventId }) }),
   decide: (id: string, decision: "approve" | "reject", operator: string, note: string) =>
     req(`/investigations/${id}/decision`, { method: "POST", body: JSON.stringify({ decision, operator, note }) }),
+  /** Ask a Sentinel agent (eventId) or the Mission Director (eventId = null). The server adds the context. */
+  chat: (question: string, eventId: string | null, history: ChatTurn[]) =>
+    req<ChatReply>("/chat", { method: "POST", body: JSON.stringify({ question, event_id: eventId, history }) }, 45000),
   separation: (eventId: string, invId?: string, maneuverId?: string) => {
     const q = new URLSearchParams({ half_window_s: "60" });
     if (invId && maneuverId) {

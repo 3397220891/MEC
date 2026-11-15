@@ -31,6 +31,8 @@ DEFAULT_TARGET_MISS_KM = _f("TARGET_MISS_KM", 2.0)
 AGENT_MAX_TOOL_CALLS = int(_f("AGENT_MAX_TOOL_CALLS", 16))
 AGENT_WALL_CLOCK_S = _f("AGENT_WALL_CLOCK_S", 180)
 TOOL_TIMEOUT_S = _f("TOOL_TIMEOUT_S", 30)
+CHAT_TIMEOUT_S = _f("CHAT_TIMEOUT_S", 20)  # per chat question; keep short so a blocked network falls back fast
+CHAT_LLM_BACKOFF_S = _f("CHAT_LLM_BACKOFF_S", 120)  # after a connection failure, answer deterministically for this long
 
 CORS_ORIGINS = os.getenv("CORS_ORIGINS", "http://localhost:3000,http://127.0.0.1:3000").split(",")
 

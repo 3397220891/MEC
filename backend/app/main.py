@@ -11,7 +11,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
 from . import config, db
-from .agent import runner
+from .agent import chat, runner
 from .physics import maneuver as mnv
 from .physics.propagation import state, states
 from .physics.screening import separation_series
@@ -198,6 +198,26 @@ def decide(inv_id: str, body: Decision):
     db.execute("UPDATE investigations SET status = ?, decision = ? WHERE id = ?", (status, db.dumps(decision), inv_id))
     db.audit(body.operator.strip(), f"recommendation_{status}", {"investigation": inv_id, **decision})
     return {"investigation_id": inv_id, "status": status, "decision": decision}
+
+
+# ------------------------------------------------------------------ chat
+
+class ChatTurn(BaseModel):
+    role: Literal["user", "assistant"]
+    content: str = Field(min_length=1, max_length=2000)
+
+
+class ChatRequest(BaseModel):
+    question: str = Field(min_length=1, max_length=500)
+    event_id: str | None = Field(default=None, max_length=64, description="Omit to ask the Mission Director")
+    history: list[ChatTurn] = Field(default_factory=list, max_length=20)
+
+
+@app.post("/api/chat")
+def chat_endpoint(body: ChatRequest):
+    """Ask a Sentinel agent (event_id) or the Mission Director (no event_id). Context is rebuilt server-side."""
+    event = _event(body.event_id) if body.event_id else None
+    return chat.answer(_mission(), event, body.question.strip(), [t.model_dump() for t in body.history])
 
 
 @app.get("/api/audit")

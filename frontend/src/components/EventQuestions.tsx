@@ -1,7 +1,8 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import type { CloseEvent, ComparisonRow, Investigation, MissionState } from "@/lib/types";
+import { api } from "@/lib/api";
+import type { ChatTurn, CloseEvent, ComparisonRow, Investigation, MissionState } from "@/lib/types";
 
 const questions = [
   { id: "risk", label: "Why this risk level?" },
@@ -10,7 +11,23 @@ const questions = [
 ] as const;
 
 type Topic = (typeof questions)[number]["id"];
-type Exchange = { eventId: string; prompt: string; answer: string; topic?: Topic; comparison?: [string, string]; evidence?: string };
+type Exchange = {
+  key: number;
+  eventId: string;
+  agentId: string | null; // null = Mission Director
+  prompt: string;
+  answer: string;
+  topic?: Topic;
+  comparison?: [string, string];
+  evidence?: string;
+  pending?: boolean;
+  mode?: "llm" | "fallback" | "offline";
+  model?: string;
+  evidenceIds?: string[];
+  warn?: string;
+};
+
+const DIRECTOR_QUESTION = "Which alert should I review first?";
 
 function agentName(eventId: string) {
   return `Sentinel ${eventId.replace(/^EVT-/, "")}`;
@@ -36,6 +53,7 @@ export default function EventQuestions({ event, events, investigations, onSelect
 }) {
   const [draft, setDraft] = useState("");
   const [exchanges, setExchanges] = useState<Exchange[]>([]);
+  const [recipient, setRecipient] = useState<"event" | "director">("event");
   const messages = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -69,20 +87,38 @@ export default function EventQuestions({ event, events, investigations, onSelect
       : unavailable,
   };
 
-  function send(prompt: string, topic = questionTopic(prompt)) {
+  async function send(prompt: string, topic = questionTopic(prompt)) {
     const message = prompt.trim();
     if (!message) return;
-    const evidence = topic === "risk"
+    const toDirector = recipient === "director";
+    const agentId = toDirector ? null : event.id;
+    const evidence = toDirector ? undefined : topic === "risk"
       ? "event-screening-details"
       : topic && candidate && options.length > 1 ? "event-maneuver-comparison" : undefined;
-    const comparison: Exchange["comparison"] = topic === "maneuver" && candidate && baseline
+    const comparison: Exchange["comparison"] = !toDirector && topic === "maneuver" && candidate && baseline
       ? [baseline.predicted_miss_km.toFixed(3), candidate.predicted_miss_km.toFixed(3)]
       : undefined;
-    setExchanges((previous) => [...previous, {
-      eventId: event.id, prompt: message, topic, evidence, comparison,
-      answer: topic ? answers[topic] : "I can explain this event’s risk level, compare maneuvers, or check for new close approaches.",
-    }]);
+    // Used only if the backend cannot be reached at all.
+    const local = toDirector
+      ? priority ? `Review ${agentName(priority.id)} first. This ${priority.severity} alert is awaiting operator approval.` : "No alert is awaiting approval."
+      : topic ? answers[topic] : "I can explain this event’s risk level, compare maneuvers, or check for new close approaches.";
+    // Recent turns with the same agent; the server adds the mission context on every call.
+    const history: ChatTurn[] = exchanges
+      .filter((x) => x.agentId === agentId && !x.pending && x.answer)
+      .slice(-4)
+      .flatMap((x) => [{ role: "user" as const, content: x.prompt }, { role: "assistant" as const, content: x.answer }]);
+    const key = Date.now() + Math.random();
+    setExchanges((previous) => [...previous, { key, eventId: event.id, agentId, prompt: message, topic, evidence, comparison, answer: "", pending: true }]);
     setDraft("");
+    let patch: Partial<Exchange>;
+    try {
+      const r = await api.chat(message, agentId, history);
+      const issues = [...r.check.unknown_evidence.map((e) => `unknown ${e}`), ...r.check.unverified_numbers.map((n) => `unverified ${n}`)];
+      patch = { answer: r.answer, mode: r.mode, model: r.model, evidenceIds: r.evidence, warn: issues.length ? issues.join(", ") : undefined };
+    } catch {
+      patch = { answer: local, mode: "offline" };
+    }
+    setExchanges((previous) => previous.map((x) => (x.key === key ? { ...x, ...patch, pending: false } : x)));
   }
 
   return (
@@ -124,16 +160,27 @@ export default function EventQuestions({ event, events, investigations, onSelect
           ) : <p>No alert is awaiting approval. Continue monitoring active investigations.</p>}
           <p className="mt-1 text-muted">Final approval belongs to the operator.</p>
         </div>
-        {exchanges.map((entry, index) => (
-          <div key={index} className="space-y-2.5">
+        {exchanges.map((entry) => (
+          <div key={entry.key} className="space-y-2.5">
             <p className="ml-auto w-fit max-w-[90%] break-words rounded-xl rounded-br-sm border border-line bg-panel-2 px-2.5 py-1.5 text-ink">
               <span className="sr-only">You: </span>{entry.prompt}
             </p>
             <div className="flex items-start gap-2 text-ink-2">
               <span aria-hidden="true" className="grid size-6 shrink-0 place-items-center rounded-md border border-line bg-panel-2 text-accent">◎</span>
               <div className="min-w-0">
-                <p className="font-semibold text-ink">{agentName(entry.eventId)}</p>
-                <p>{entry.answer}</p>
+                <p className="font-semibold text-ink">
+                  {entry.agentId ? agentName(entry.agentId) : "Mission Director"}
+                  {entry.mode && (
+                    <span className="ml-1.5 rounded border border-line px-1 py-px text-[10px] font-normal text-muted">
+                      {entry.mode === "llm" ? entry.model : entry.mode === "fallback" ? "rule-based" : "local"}
+                    </span>
+                  )}
+                </p>
+                {entry.pending ? <p className="animate-pulse text-watch">● thinking…</p> : <p className="whitespace-pre-wrap">{entry.answer}</p>}
+                {!!entry.evidenceIds?.length && (
+                  <p className="mt-1 font-mono text-[10px] text-muted">evidence: {entry.evidenceIds.join(" · ")}</p>
+                )}
+                {entry.warn && <p className="mt-1 text-[10px] text-amber">⚠ check: {entry.warn}</p>}
                 {entry.comparison && (
                   <p className="mt-2 rounded-md border border-line bg-panel-2/80 px-2 py-1.5 font-mono tabular-nums text-accent">
                     {entry.comparison[0]} → {entry.comparison[1]} km
@@ -153,10 +200,18 @@ export default function EventQuestions({ event, events, investigations, onSelect
         ))}
       </div>
       <div className="border-t border-line bg-panel-2/35 p-2.5">
-        <p className="mb-2 text-[11px] text-muted">Reply to <strong className="font-medium text-ink">{agentName(event.id)}</strong></p>
+        <div className="mb-2 flex items-center gap-1.5 text-[11px] text-muted" role="radiogroup" aria-label="Ask">
+          <span>Ask</span>
+          {(["event", "director"] as const).map((r) => (
+            <button key={r} type="button" role="radio" aria-checked={recipient === r} onClick={() => setRecipient(r)}
+              className="rounded-md border border-line px-1.5 py-0.5 text-ink-2 aria-checked:border-accent/60 aria-checked:text-accent">
+              {r === "event" ? agentName(event.id) : "Mission Director"}
+            </button>
+          ))}
+        </div>
         <div className="mb-2 flex flex-wrap gap-1.5">
-          {questions.map(({ id, label }) => (
-            <button key={id} type="button" onClick={() => send(label, id)}
+          {(recipient === "director" ? [{ id: undefined, label: DIRECTOR_QUESTION }] : questions).map(({ id, label }) => (
+            <button key={label} type="button" onClick={() => send(label, id)}
               className="rounded-full border border-line px-2 py-0.5 text-left text-[11px] text-ink-2 hover:border-accent/60 hover:text-accent">
               {label}
             </button>
@@ -165,7 +220,7 @@ export default function EventQuestions({ event, events, investigations, onSelect
         <form className="flex min-w-0 items-center gap-1 rounded-lg border border-line bg-bg px-1.5 py-1 focus-within:border-accent/60"
           onSubmit={(event) => { event.preventDefault(); send(draft); }}>
           <input aria-label="Ask about this event" value={draft} onChange={(event) => setDraft(event.target.value)}
-            maxLength={400} placeholder="Ask about this event…" className="min-w-0 flex-1 bg-transparent px-1 py-1 text-xs text-ink placeholder:text-muted focus:outline-none" />
+            maxLength={400} placeholder={recipient === "director" ? "Ask the Mission Director…" : "Ask about this event…"} className="min-w-0 flex-1 bg-transparent px-1 py-1 text-xs text-ink placeholder:text-muted focus:outline-none" />
           <button type="submit" disabled={!draft.trim()} className="rounded-md bg-accent px-2 py-1 text-xs font-semibold text-black disabled:opacity-40">
             Send
           </button>

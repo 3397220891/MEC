@@ -160,8 +160,8 @@ def _parse_json(text: str) -> dict | None:
     return value if isinstance(value, dict) else None
 
 
-def make_client() -> openai.OpenAI:
-    return openai.OpenAI(base_url=config.LLM_BASE_URL, api_key=config.LLM_API_KEY, timeout=90.0, max_retries=2)
+def make_client(timeout: float = 90.0, max_retries: int = 2) -> openai.OpenAI:
+    return openai.OpenAI(base_url=config.LLM_BASE_URL, api_key=config.LLM_API_KEY, timeout=timeout, max_retries=max_retries)
 
 
 def _run_llm(ctx: InvestigationContext, client: openai.OpenAI | None = None) -> dict:

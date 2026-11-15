@@ -149,3 +149,19 @@ export interface Separation {
   maneuvered?: SeparationPoint[];
   maneuver_id?: string;
 }
+
+export interface ChatTurn {
+  role: "user" | "assistant";
+  content: string;
+}
+
+export interface ChatReply {
+  agent: string;
+  event_id: string | null;
+  answer: string;
+  evidence: string[];
+  mode: "llm" | "fallback";
+  model: string;
+  reason?: string | null;
+  check: { unknown_evidence: string[]; unverified_numbers: string[]; grounded: boolean };
+}
