@@ -101,6 +101,48 @@ const ACTION_LABEL = {
 };
 const RISK_STYLE = { HIGH: "text-red", ELEVATED: "text-amber", LOW: "text-ok" };
 
+/** Prominent problems with an investigation, shown at the top of the assistant (not hidden in details). */
+function InvestigationAlerts({ inv, onRetry }: { inv: Investigation; onRetry: () => void }) {
+  const fallbackStep = inv.steps.find((s) => s.kind === "system" && /fallback planner engaged/i.test(String(s.output?.message ?? "")));
+  const reason = String(fallbackStep?.output?.message ?? "").replace(/^.*engaged:\s*/i, "");
+  const unchecked = inv.validation?.claims.filter((c) => c.status !== "verified").length ?? 0;
+  return (
+    <div className="mt-2 space-y-1.5">
+      {inv.status === "failed" && (
+        <div role="alert" className="rounded-md border border-red/60 bg-red/10 p-2 text-[11.5px] text-red">
+          <p className="font-semibold">⛔ Investigation failed</p>
+          <p className="mt-0.5 break-words text-ink-2">{inv.error ?? "Unknown error"}</p>
+          <button type="button" onClick={onRetry} className="mt-1.5 rounded border border-red/60 px-2 py-0.5 font-semibold hover:bg-red/10">
+            ↻ Re-run investigation
+          </button>
+        </div>
+      )}
+      {inv.mode === "llm+fallback" && (
+        <div role="status" className="rounded-md border border-amber/60 bg-amber/10 p-2 text-[11.5px] text-amber">
+          <p className="font-semibold">⚠ AI agent failed mid-investigation — the rule-based planner finished it</p>
+          {reason && <p className="mt-0.5 text-ink-2">Reason: {reason}</p>}
+        </div>
+      )}
+      {inv.mode === "fallback" && (
+        <p className="rounded-md border border-line bg-panel-2/60 px-2 py-1 text-[11px] text-ink-2">
+          ◆ Rule-based planner (no AI){reason ? ` — ${reason}` : ""}
+        </p>
+      )}
+      {inv.validation && !inv.validation.valid && (
+        <div role="alert" className="rounded-md border border-red/60 bg-red/10 p-2 text-[11.5px] text-red">
+          <p className="font-semibold">⛔ Recommendation failed server validation — verify manually before deciding</p>
+          <p className="mt-0.5 text-ink-2">{inv.validation.errors.slice(0, 2).join("; ")}</p>
+        </div>
+      )}
+      {inv.validation?.valid && unchecked > 0 && (
+        <p className="rounded-md border border-amber/50 bg-amber/10 px-2 py-1 text-[11px] text-amber">
+          ⚠ {unchecked} rationale claim(s) contain numbers not matched to cited evidence — check them in the report.
+        </p>
+      )}
+    </div>
+  );
+}
+
 export default function AgentPanel({ inv, event, events, investigations, onSelectEvent, onReviewEvent, reviewRequest, onStart, onOpenReport, onDecided, llmAvailable, thresholds, onShowManeuver }: {
   inv: Investigation | null; event: CloseEvent | null; onStart: (eventId: string) => void; onOpenReport: () => void;
   events: CloseEvent[]; investigations: MissionState["investigations"]; onSelectEvent: (id: string) => void;
@@ -175,6 +217,7 @@ export default function AgentPanel({ inv, event, events, investigations, onSelec
             <span className="font-mono text-muted">{event.id}</span>
             <span className="text-ink-2">{inv ? STATUS_LABEL[inv.status] : "Investigation unavailable"}</span>
           </div>
+          {inv && <InvestigationAlerts inv={inv} onRetry={() => onStart(event.id)} />}
           {rec && (
             <button type="button" onClick={() => setHeadlineOpen((v) => !v)} title={headlineOpen ? "Collapse" : "Show full recommendation"}
               className={`mt-2 w-full text-left text-[12px] leading-snug text-ink-2 hover:text-ink ${headlineOpen ? "" : "line-clamp-4"}`}>

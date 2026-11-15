@@ -216,3 +216,22 @@ export type ChatStreamEvent =
   | { type: "notice"; message: string }
   | { type: "error"; message: string }
   | { type: "final"; answer: string; evidence: string[]; mode: "llm" | "fallback"; model: string; tool_calls: number; reason?: string | null; check: ChatReply["check"] };
+
+export interface LlmStatus {
+  state: "online" | "unreachable" | "auth_error" | "error" | "not_configured";
+  reachable: boolean;
+  model: string | null;
+  base_url: string;
+  detail: string;
+  checked_at: string;
+}
+
+export interface Health {
+  status: string;
+  llm_available: boolean;
+  model: string | null;
+  llm: LlmStatus;
+  scenario: string | null;
+  data_source: string | null;
+  actuation_capability: boolean;
+}

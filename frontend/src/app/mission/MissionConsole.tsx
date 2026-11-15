@@ -5,14 +5,18 @@ import Image from "next/image";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import AgentPanel from "@/components/AgentPanel";
+import ErrorBoundary from "@/components/ErrorBoundary";
+import { ConnectionBanner, StatusPills } from "@/components/SystemStatus";
+import Toasts from "@/components/Toasts";
 import { AlertQueue, OrbitalReadings, TrackingSummary } from "@/components/MissionReadings";
 import ObjectPanel from "@/components/ObjectPanel";
 import ReportModal from "@/components/ReportModal";
 import TimelineBar from "@/components/TimelineBar";
 import { api } from "@/lib/api";
 import { clock, seek } from "@/lib/clock";
+import { errorText, toast } from "@/lib/toast";
 import "../mission.css";
-import type { Investigation, ManeuverPlan, MissionState, Trajectories } from "@/lib/types";
+import type { Health, Investigation, ManeuverPlan, MissionState, Trajectories } from "@/lib/types";
 
 const Globe = dynamic(() => import("@/components/Globe"), {
   ssr: false,
@@ -32,6 +36,9 @@ export default function MissionConsole({ operator }: { operator: { id: string; n
   const [loading, setLoading] = useState<string | null>("Connecting to mission backend…");
   const [loadError, setLoadError] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [health, setHealth] = useState<Health | null>(null);
+  const [lastOkAt, setLastOkAt] = useState<number | null>(null);
+  const wasDown = useRef(false);
   const catalog = useRef<HTMLDialogElement>(null);
   const [reviewRequest, setReviewRequest] = useState<{ eventId: string } | null>(null);
   const [reportOpen, setReportOpen] = useState(false);
@@ -61,6 +68,7 @@ export default function MissionConsole({ operator }: { operator: { id: string; n
       const s = await api.state();
       setState(s);
       setError(null);
+      setLastOkAt(Date.now());
       return s;
     } catch (e) {
       setError((e as Error).message);
@@ -85,8 +93,8 @@ export default function MissionConsole({ operator }: { operator: { id: string; n
     setLoading("Loading mission data…");
     setLoadError(null);
     try {
-      const s = await api.state();
-      setState(s);
+      const s = await refreshState();
+      if (!s) return;
       const t = await api.trajectories(s.objects.length > 40 ? 60 : 30);
       setTraj(t);
       focusInitialEvent(s);
@@ -95,11 +103,47 @@ export default function MissionConsole({ operator }: { operator: { id: string; n
     } finally {
       setLoading(null);
     }
-  }, [focusInitialEvent]);
+  }, [focusInitialEvent, refreshState]);
 
   useEffect(() => {
     void loadAll();
   }, [loadAll]);
+
+  const checkHealth = useCallback(async (probe = false) => {
+    try {
+      setHealth(await api.health(probe));
+    } catch {
+      // The state poll reports backend outages.
+    }
+  }, []);
+
+  useEffect(() => {
+    void checkHealth();
+    const id = setInterval(checkHealth, 15000);
+    return () => clearInterval(id);
+  }, [checkHealth]);
+
+  const backendDown = !!error && !loading;
+  useEffect(() => {
+    if (backendDown && !wasDown.current) toast("error", "Backend connection lost", error ?? undefined);
+    if (!backendDown && wasDown.current && !loading) {
+      toast("ok", "Backend reconnected");
+      void checkHealth(true);
+      if (!traj) void loadAll();
+    }
+    if (!loading) wasDown.current = backendDown;
+  }, [backendDown, checkHealth, error, loadAll, loading, traj]);
+
+  const previousLlmState = useRef<Health["llm"]["state"] | undefined>(undefined);
+  useEffect(() => {
+    if (!health) return;
+    const { state: llmState, detail } = health.llm;
+    if (previousLlmState.current && previousLlmState.current !== llmState) {
+      if (llmState === "online") toast("ok", "AI agent back online", detail);
+      else toast("warn", "Using the rule-based planner", detail);
+    }
+    previousLlmState.current = llmState;
+  }, [health]);
 
   // Keep event / investigation list fresh.
   useEffect(() => {
@@ -118,7 +162,11 @@ export default function MissionConsole({ operator }: { operator: { id: string; n
   useEffect(() => {
     if (!planKey) return setPlan(null);
     let live = true;
-    api.plan(planKey).then((p) => live && setPlan(p)).catch(() => live && setPlan(null));
+    api.plan(planKey).then((p) => live && setPlan(p)).catch((e) => {
+      if (!live) return;
+      setPlan(null);
+      toast("warn", "Maneuver plan could not be drawn on the globe", errorText(e));
+    });
     return () => { live = false; };
   }, [planKey]);
 
@@ -143,7 +191,7 @@ export default function MissionConsole({ operator }: { operator: { id: string; n
       await api.startInvestigation(eventId);
       await refreshState();
     } catch (e) {
-      setError((e as Error).message);
+      toast("error", "Could not start the investigation", errorText(e));
     }
   }
 
@@ -210,16 +258,22 @@ export default function MissionConsole({ operator }: { operator: { id: string; n
               {logoutError && <p role="alert" className="px-2 text-xs text-red">Sign-out failed. Try again.</p>}
             </div>
           </details>
+          <StatusPills backendOk={!backendDown} health={health} onRecheck={() => void checkHealth(true)} />
           <span className="rounded bg-panel-2 px-2 py-0.5 text-ink-2" title="This system has no command capability">ADVISORY ONLY · NO UPLINK</span>
         </div>
       </header>
+
+      {backendDown && error && <ConnectionBanner error={error} lastOkAt={lastOkAt}
+        onRetry={() => { void (traj ? refreshState() : loadAll()); }} />}
 
       {state && <AlertQueue events={[...state.events].sort((a, b) => SEV_RANK[a.severity] - SEV_RANK[b.severity] || a.tca_s - b.tca_s)}
         investigations={state.investigations} selectedId={activeEventId} onSelect={selectEvent} onReview={reviewEvent} />}
 
       <section ref={stageRef} className="mission-stage" aria-label="Mission control">
         <div className="mission-scene" aria-label="Interactive orbital view">
-          <Globe traj={traj} objects={state?.objects ?? []} selectedId={selectedId} onSelect={selectObject} event={activeEvent} plan={plan} insets={insets} />
+          <ErrorBoundary name="3D view">
+            <Globe traj={traj} objects={state?.objects ?? []} selectedId={selectedId} onSelect={selectObject} event={activeEvent} plan={plan} insets={insets} />
+          </ErrorBoundary>
         </div>
 
         <TrackingSummary
@@ -253,15 +307,20 @@ export default function MissionConsole({ operator }: { operator: { id: string; n
             }}
             llmAvailable={state?.llm_available ?? false}
             thresholds={state?.thresholds_km}
-            onShowManeuver={(invId, mid) => { api.plan(invId, mid).then(setPlan).catch(() => undefined); }}
+            onShowManeuver={(invId, mid) => {
+              api.plan(invId, mid).then((result) => {
+                setPlan(result);
+                toast("info", `Showing ${mid} on the globe`, result.options.find((option) => option.maneuver_id === mid)?.label);
+              }).catch((e) => toast("error", `Could not draw ${mid} on the globe`, errorText(e)));
+            }}
           />
         </div>
 
         <div className="mission-bottom">
-          {(loading || loadError || error) && (
+          {(loading || loadError) && (
             <div className="mission-status mission-card">
               <p role={loading ? "status" : "alert"}>
-                {loading ?? (loadError ? `Could not load the mission. ${loadError}` : error)}
+                {loading ?? `Could not load the trajectories. ${loadError}`}
               </p>
               {!loading && loadError && (
                 <button type="button" onClick={() => void loadAll()}
@@ -291,6 +350,7 @@ export default function MissionConsole({ operator }: { operator: { id: string; n
         <ObjectPanel objects={state?.objects ?? []} events={state?.events ?? []} traj={traj} selectedId={selectedId} onSelect={selectObject} />
       </dialog>
 
+      <Toasts />
       {reportOpen && inv && inv.event_id === activeEventId && <ReportModal inv={inv} onClose={() => setReportOpen(false)} />}
     </main>
   );
