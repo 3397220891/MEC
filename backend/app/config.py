@@ -19,7 +19,7 @@ def _f(name: str, default: float) -> float:
 # (http://localhost:11434/v1) to run a local model instead.
 LLM_BASE_URL = os.getenv("LLM_BASE_URL", "https://api.deepseek.com")
 LLM_API_KEY = os.getenv("LLM_API_KEY") or os.getenv("DEEPSEEK_API_KEY") or ""
-MODEL = os.getenv("ORBITALGUARD_MODEL", "deepseek-v4-flash")
+MODEL = os.getenv("ORBITALGUARD_MODEL", "deepseek-flash")
 AGENT_MODE = os.getenv("ORBITALGUARD_AGENT_MODE", "auto")  # auto | llm | offline
 DB_PATH = Path(os.getenv("ORBITALGUARD_DB", Path(__file__).resolve().parent.parent / "orbitalguard.db"))
 

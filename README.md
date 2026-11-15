@@ -42,7 +42,7 @@ cd backend && pytest -q
 |---|---|---|
 | `DEEPSEEK_API_KEY` (or `LLM_API_KEY`) | — | Enables the LLM agent; without it the fallback planner runs |
 | `LLM_BASE_URL` | `https://api.deepseek.com` | Any OpenAI-compatible endpoint; `http://localhost:11434/v1` for Ollama |
-| `ORBITALGUARD_MODEL` | `deepseek-v4-flash` | Agent model (check the exact name in the provider console) |
+| `ORBITALGUARD_MODEL` | `deepseek-flash` | Agent model (check the exact name in the provider console) |
 | `ORBITALGUARD_AGENT_MODE` | `auto` | `offline` forces the fallback planner |
 | `SCREEN_THRESHOLD_KM` / `RED_THRESHOLD_KM` / `AMBER_THRESHOLD_KM` | 5 / 1 / 2.5 | Screening and severity thresholds |
 

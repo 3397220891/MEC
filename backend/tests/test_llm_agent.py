@@ -71,3 +71,10 @@ def test_bad_answer_twice_falls_back(ctx):
     client = FakeClient([_msg(content="not json"), _msg(content="still not json")])
     with pytest.raises(runner._FallbackNeeded):
         runner._run_llm(ctx, client)
+
+
+def test_short_utc_times_are_not_checked_as_numbers():
+    from app.agent.report import _NUM, _TIMESTAMP
+
+    text = _TIMESTAMP.sub(" ", "22.55 km at 07:29Z, TCA 09:04:59Z, epoch 2026-11-15T06:00:00Z, burn at 14:05 UTC")
+    assert [m.group(1) for m in _NUM.finditer(text)] == ["22.55"]

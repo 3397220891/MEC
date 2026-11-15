@@ -135,12 +135,14 @@ def _tool_exec(ctx, name, inp):
 
 
 def _log_reasoning(ctx, msg) -> None:
-    # DeepSeek thinking models return their reasoning in `reasoning_content`; others may put notes in `content`.
+    # Log one thought per turn: the model's own narration (`content`) when it gives one alongside tool calls,
+    # otherwise the raw reasoning (`reasoning_content`, returned by DeepSeek thinking models). Logging both
+    # showed two near-identical entries per step in the timeline.
+    narration = (msg.content or "").strip() if msg.tool_calls else ""
     thinking = getattr(msg, "reasoning_content", None) or (getattr(msg, "model_extra", None) or {}).get("reasoning_content")
-    if thinking:
-        ctx.log("thought", output={"text": thinking})
-    if msg.tool_calls and (msg.content or "").strip():
-        ctx.log("thought", output={"text": msg.content})
+    text = narration or (thinking or "").strip()
+    if text:
+        ctx.log("thought", output={"text": text})
 
 
 def _parse_json(text: str) -> dict | None:
