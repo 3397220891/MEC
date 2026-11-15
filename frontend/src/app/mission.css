@@ -28,9 +28,11 @@
   position: relative;
   isolation: isolate;
   flex: 1;
-  min-height: 690px;
+  /* Width of the assistant + chat column; the globe is re-centred in the space left of it (Globe insets). */
+  --right-w: clamp(600px, 47vw, 900px);
+  min-height: 560px;
   display: grid;
-  grid-template-columns: minmax(164px, 200px) minmax(0, 1fr) minmax(455px, 42%);
+  grid-template-columns: minmax(164px, 200px) minmax(0, 1fr) var(--right-w);
   grid-template-rows: auto minmax(0, 1fr) auto;
   grid-template-areas: "left counts right" "left . right" "bottom bottom bottom";
   gap: 14px clamp(12px, 1.5vw, 24px);
@@ -67,10 +69,20 @@
 .mission-counts > * { background: rgb(4 24 40 / 88%); width: min(100%, 170px); }
 .mission-left { grid-area: left; min-width: 0; align-self: start; }
 .mission-telemetry { display: grid; gap: 10px; margin-top: 10px; }
-.mission-right { grid-area: right; min-height: 0; min-width: 0; display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.2fr); align-items: start; gap: 10px; }
-.mission-right > aside { width: 100%; max-height: 100%; overflow: auto; }
+.mission-right {
+  grid-area: right;
+  min-height: 0;
+  min-width: 0;
+  align-self: stretch;
+  display: grid;
+  /* assistant: compact summary + review; chat: needs room for live tool-call transcripts */
+  grid-template-columns: minmax(250px, 0.78fr) minmax(0, 1.22fr);
+  align-items: stretch;
+  gap: 10px;
+}
+.mission-right > aside { width: 100%; min-height: 0; max-height: 100%; overflow: auto; }
 .mission-bottom { grid-area: bottom; width: 100%; align-self: end; }
-.mission-right > .mission-group-chat { overflow: hidden; }
+.mission-right > .mission-group-chat { overflow: hidden; display: flex; flex-direction: column; }
 .mission-alert-queue {
   flex: none;
   display: flex;
@@ -138,6 +150,17 @@
 .mission-dialog-header { display: flex; align-items: center; justify-content: space-between; padding: 0 1px 8px; font-weight: 600; }
 .mission-dialog > aside { height: min(520px, 76dvh); overflow: auto; }
 .mission-close { width: 30px; height: 30px; border: 1px solid var(--mission-line); border-radius: 7px; font-size: 20px; line-height: 1; }
+
+/* Short screens (e.g. 1366x768 laptops): compact readings so the left column clears the timeline. */
+@media (min-width: 841px) and (max-height: 860px) {
+  .mission-stage { min-height: 520px; padding-block: 12px; row-gap: 10px; }
+  .mission-telemetry { gap: 7px; margin-top: 7px; }
+  .mission-reading { padding: 7px 12px; }
+  .mission-reading-label { font-size: 12.5px; }
+  .mission-value { font-size: clamp(22px, 2vw, 30px); margin-top: 3px; }
+  .mission-reading-note { margin-top: 2px; }
+  .mission-catalog { padding-block: 8px; }
+}
 
 @media (max-width: 840px) {
   .mission-stage {

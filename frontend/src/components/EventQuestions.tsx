@@ -173,25 +173,32 @@ export default function EventQuestions({ event, events, investigations, onSelect
   }
 
   return (
-    <section aria-label="Collision chat" className="mt-3 flex min-h-0 flex-col overflow-hidden rounded-xl border border-line bg-bg/80">
-      <div className="flex items-center gap-2 border-b border-line px-3 py-2.5 text-xs">
-        <span className={`h-1.5 w-1.5 rounded-full ${event.severity === "RED" ? "bg-red" : "bg-amber"}`} aria-hidden="true" />
+    <section aria-label="Collision chat" className="mt-2 flex min-h-0 flex-1 flex-col overflow-hidden rounded-xl border border-line bg-bg/80">
+      <div className="flex shrink-0 items-center gap-2 border-b border-line px-3 py-2 text-xs">
+        <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${event.severity === "RED" ? "bg-red" : "bg-amber"}`} aria-hidden="true" />
         <span className="font-semibold text-ink">{event.severity}</span>
         <span className="min-w-0 truncate text-muted" title={`${event.primary_name} × ${event.secondary_name}`}>
           {event.primary_name} × {event.secondary_name}
         </span>
+        <div className="ml-auto flex shrink-0 rounded-md border border-line p-0.5 text-[11px]" role="radiogroup" aria-label="Ask">
+          {(["event", "director"] as const).map((r) => (
+            <button key={r} type="button" role="radio" aria-checked={recipient === r} onClick={() => setRecipient(r)}
+              className="rounded px-1.5 py-0.5 text-ink-2 aria-checked:bg-accent/15 aria-checked:text-accent">
+              {r === "event" ? agentName(event.id) : "Director"}
+            </button>
+          ))}
+        </div>
       </div>
-      <div className="shrink-0 border-b border-accent/35 bg-accent/5 px-3 py-2 text-xs text-ink-2">
-        <p className="font-semibold text-accent">Mission Director</p>
+      <div className="flex shrink-0 items-center gap-2 border-b border-accent/35 bg-accent/5 px-3 py-1.5 text-[11px] text-ink-2">
+        <span className="shrink-0 whitespace-nowrap font-semibold text-accent">Mission Director</span>
         {priority ? (
           <>
-            <p>Review <strong className="text-ink">{agentName(priority.id)}</strong> first. This {priority.severity} alert is awaiting operator approval.</p>
-            <button type="button" onClick={() => onReviewEvent(priority.id)}
-              className="mt-1.5 text-watch underline underline-offset-2">
-              Review priority alert ↗
+            <span className="min-w-0 truncate">Review <strong className="text-ink">{agentName(priority.id)}</strong> first · {priority.severity} · awaiting approval</span>
+            <button type="button" onClick={() => onReviewEvent(priority.id)} className="ml-auto shrink-0 text-watch underline underline-offset-2">
+              Review ↗
             </button>
           </>
-        ) : <p>No alert is awaiting approval. Continue monitoring active investigations.</p>}
+        ) : <span className="min-w-0 truncate">No alert awaiting approval</span>}
       </div>
       <div ref={messages} role="log" aria-label="Chat messages" tabIndex={0}
         className="scroll-thin min-h-32 flex-1 space-y-3 overflow-y-auto px-3 py-4 text-xs leading-relaxed">
@@ -282,19 +289,10 @@ export default function EventQuestions({ event, events, investigations, onSelect
         ))}
       </div>
       <div className="shrink-0 border-t border-line bg-panel-2/35 p-2.5">
-        <div className="mb-2 flex items-center gap-1.5 text-[11px] text-muted" role="radiogroup" aria-label="Ask">
-          <span>Ask</span>
-          {(["event", "director"] as const).map((r) => (
-            <button key={r} type="button" role="radio" aria-checked={recipient === r} onClick={() => setRecipient(r)}
-              className="rounded-md border border-line px-1.5 py-0.5 text-ink-2 aria-checked:border-accent/60 aria-checked:text-accent">
-              {r === "event" ? agentName(event.id) : "Mission Director"}
-            </button>
-          ))}
-        </div>
-        <div className="mb-2 flex flex-wrap gap-1.5">
+        <div className="scroll-thin mb-2 flex gap-1.5 overflow-x-auto pb-0.5">
           {(recipient === "director" ? [{ id: undefined, label: DIRECTOR_QUESTION }] : [...questions, { id: undefined, label: WHAT_IF }]).map(({ id, label }) => (
             <button key={label} type="button" onClick={() => send(label, id)}
-              className="rounded-full border border-line px-2 py-0.5 text-left text-[11px] text-ink-2 hover:border-accent/60 hover:text-accent">
+              className="shrink-0 whitespace-nowrap rounded-full border border-line px-2 py-0.5 text-[11px] text-ink-2 hover:border-accent/60 hover:text-accent">
               {label}
             </button>
           ))}

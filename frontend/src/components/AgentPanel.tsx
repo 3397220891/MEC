@@ -114,6 +114,7 @@ export default function AgentPanel({ inv, event, events, investigations, onSelec
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [sep, setSep] = useState<Separation | null>(null);
+  const [headlineOpen, setHeadlineOpen] = useState(false);
 
   const comparison = inv?.report?.maneuver_comparison as { options: ComparisonRow[]; best_option: string | null; target_miss_km: number } | null | undefined;
   const rec = inv?.recommendation ?? null;
@@ -177,11 +178,25 @@ export default function AgentPanel({ inv, event, events, investigations, onSelec
             <span className="font-mono text-muted">{event.id}</span>
             <span className="text-ink-2">{inv ? STATUS_LABEL[inv.status] : "Investigation unavailable"}</span>
           </div>
-          {rec && <p className="mt-2 font-medium leading-snug text-ink">{rec.headline}</p>}
+          {rec && (
+            <button type="button" onClick={() => setHeadlineOpen((v) => !v)} title={headlineOpen ? "Collapse" : "Show full recommendation"}
+              className={`mt-2 w-full text-left text-[12px] leading-snug text-ink-2 hover:text-ink ${headlineOpen ? "" : "line-clamp-4"}`}>
+              {rec.headline}
+            </button>
+          )}
           {recommended && (
-            <p className="mt-1 text-ink-2">
-              <strong className="text-ink">{recommended.predicted_miss_km.toFixed(3)} km</strong> predicted miss · {recommended.delta_v_m_s} m/s Δv · {recommended.new_conjunctions} new alerts
-            </p>
+            <dl className="mt-2 grid grid-cols-3 gap-1.5 text-center">
+              {[
+                ["Predicted miss", `${recommended.predicted_miss_km.toFixed(2)} km`],
+                ["Δv", `${recommended.delta_v_m_s} m/s`],
+                ["New alerts", String(recommended.new_conjunctions)],
+              ].map(([label, value]) => (
+                <div key={label} className="rounded-md border border-line/70 bg-bg/40 px-1 py-1.5">
+                  <dt className="text-[10px] text-muted">{label}</dt>
+                  <dd className="text-[13px] font-semibold tabular-nums text-ink">{value}</dd>
+                </div>
+              ))}
+            </dl>
           )}
           <DecisionTiming event={event} option={recommended} />
         </section>

@@ -1,7 +1,7 @@
 "use client";
 
 import { Line, OrbitControls, Stars } from "@react-three/drei";
-import { Canvas, useFrame, useLoader } from "@react-three/fiber";
+import { Canvas, useFrame, useLoader, useThree } from "@react-three/fiber";
 import { Suspense, useEffect, useMemo, useRef } from "react";
 import * as THREE from "three";
 import { clock, OMEGA_EARTH, positionAt, R_EARTH_KM } from "@/lib/clock";
@@ -29,6 +29,33 @@ interface Props {
   onSelect: (id: string) => void;
   event: CloseEvent | null;
   plan?: ManeuverPlan | null;
+  /** Pixels covered by overlay panels on each side; the view is shifted so Earth sits in the free space. */
+  insets?: { left: number; right: number };
+}
+
+/**
+ * Shift the projection (not the camera) so the scene centre lands mid-way between the side panels, and pull
+ * the camera back/forward so Earth fits that free space. Runs on layout changes only, so user zoom is kept.
+ */
+function ViewCenter({ left, right }: { left: number; right: number }) {
+  const camera = useThree((st) => st.camera) as THREE.PerspectiveCamera;
+  const size = useThree((st) => st.size);
+  useEffect(() => {
+    const free = Math.max(200, size.width - left - right);
+    const radiusPx = Math.min(0.42 * free, 0.4 * size.height); // apparent Earth radius we want
+    const halfFov = THREE.MathUtils.degToRad(camera.fov / 2);
+    const dist = THREE.MathUtils.clamp((R_EARTH_KM * S * (size.height / 2)) / (Math.tan(halfFov) * radiusPx), 9, 60);
+    camera.position.setLength(dist);
+    const shift = (right - left) / 2; // px the centre must move left
+    if (Math.abs(shift) < 1) camera.clearViewOffset();
+    else camera.setViewOffset(size.width, size.height, shift, 0, size.width, size.height);
+    camera.updateProjectionMatrix();
+    return () => {
+      camera.clearViewOffset();
+      camera.updateProjectionMatrix();
+    };
+  }, [camera, size.width, size.height, left, right]);
+  return null;
 }
 
 const PLAN_COLOR = "#34d399"; // recommended maneuvered path / burn
@@ -282,12 +309,13 @@ function ManeuverPlanLayer({ plan }: { plan: ManeuverPlan }) {
   );
 }
 
-export default function Globe({ traj, objects, selectedId, onSelect, event, plan }: Props) {
+export default function Globe({ traj, objects, selectedId, onSelect, event, plan, insets }: Props) {
   const many = objects.length > 40;
   const involved = new Set(event ? [event.primary_id, event.secondary_id] : []);
   return (
     <Canvas camera={{ position: [0, 8, 20], fov: 45, near: 0.01, far: 2000 }} dpr={[1, 1.75]} gl={{ antialias: true }} fallback={<div className="mission-globe-fallback" role="status">3D view requires WebGL</div>}>
       <color attach="background" args={["#03070e"]} />
+      {insets && <ViewCenter left={insets.left} right={insets.right} />}
       {traj && <ClockDriver />}
       <ambientLight intensity={0.55} />
       <directionalLight position={[30, 12, 20]} intensity={2.1} />

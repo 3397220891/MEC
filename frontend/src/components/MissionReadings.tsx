@@ -1,6 +1,6 @@
 "use client";
 
-import { fmtDuration, liveKinematics, useClockTime, utcAt } from "@/lib/clock";
+import { clock, fmtDuration, liveKinematics, seek, useClockTime, utcAt } from "@/lib/clock";
 import type { CloseEvent, ComparisonRow, InvestigationSummary, SatObject, Trajectories } from "@/lib/types";
 
 function Reading({ label, value, unit, tone, children }: {
@@ -112,7 +112,16 @@ export function DecisionTiming({ event, option }: { event: CloseEvent; option?: 
       {untilBurn !== null && (
         <div>
           <dt className="text-muted">Proposed burn · mission clock</dt>
-          <dd className={`tabular-nums ${untilBurn <= 0 ? "text-amber" : ""}`}>{untilBurn > 0 ? `In ${fmtDuration(untilBurn).slice(2)}` : "Proposed burn time passed"} · {lead != null && utcAt(event.tca_utc, -lead * 60)} UTC</dd>
+          <dd className={`tabular-nums ${untilBurn <= 0 ? "text-amber" : ""}`}>
+            {untilBurn > 0 ? `In ${fmtDuration(untilBurn).slice(2)}` : "Proposed burn time passed"} · {lead != null && utcAt(event.tca_utc, -lead * 60)} UTC
+            {lead != null && (
+              <button type="button" className="ml-1.5 text-watch underline underline-offset-2"
+                title="Move the mission clock to 2 minutes before the proposed burn and play"
+                onClick={() => { seek(event.tca_s - lead * 60 - 120); clock.playing = true; }}>
+                ⏮ replay from burn
+              </button>
+            )}
+          </dd>
         </div>
       )}
     </dl>

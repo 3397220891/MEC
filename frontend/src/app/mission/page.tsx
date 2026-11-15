@@ -33,6 +33,25 @@ export default function MissionPage() {
   const [reviewRequest, setReviewRequest] = useState<{ eventId: string } | null>(null);
   const [reportOpen, setReportOpen] = useState(false);
   const [plan, setPlan] = useState<ManeuverPlan | null>(null);
+  const stageRef = useRef<HTMLElement>(null);
+  const leftRef = useRef<HTMLDivElement>(null);
+  const rightRef = useRef<HTMLDivElement>(null);
+  const [insets, setInsets] = useState<{ left: number; right: number } | undefined>(undefined);
+
+  // Measure how much of the globe canvas the side panels cover, so Earth is centred in the free space.
+  useEffect(() => {
+    const stage = stageRef.current, left = leftRef.current, right = rightRef.current;
+    if (!stage || !left || !right) return;
+    const measure = () => {
+      if (window.innerWidth <= 840) return setInsets(undefined); // stacked layout: globe is not overlaid
+      const s = stage.getBoundingClientRect(), l = left.getBoundingClientRect(), r = right.getBoundingClientRect();
+      setInsets({ left: Math.max(0, l.right - s.left), right: Math.max(0, s.right - r.left) });
+    };
+    measure();
+    const ro = new ResizeObserver(measure);
+    [stage, left, right].forEach((el) => ro.observe(el));
+    return () => ro.disconnect();
+  }, []);
 
   const refreshState = useCallback(async () => {
     try {
@@ -170,9 +189,9 @@ export default function MissionPage() {
       {state && <AlertQueue events={[...state.events].sort((a, b) => SEV_RANK[a.severity] - SEV_RANK[b.severity] || a.tca_s - b.tca_s)}
         investigations={state.investigations} selectedId={activeEventId} onSelect={selectEvent} onReview={reviewEvent} />}
 
-      <section className="mission-stage" aria-label="Mission control">
+      <section ref={stageRef} className="mission-stage" aria-label="Mission control">
         <div className="mission-scene" aria-label="Interactive orbital view">
-          <Globe traj={traj} objects={state?.objects ?? []} selectedId={selectedId} onSelect={selectObject} event={activeEvent} plan={plan} />
+          <Globe traj={traj} objects={state?.objects ?? []} selectedId={selectedId} onSelect={selectObject} event={activeEvent} plan={plan} insets={insets} />
         </div>
 
         <TrackingSummary
@@ -180,7 +199,7 @@ export default function MissionPage() {
           alerts={state?.events.length}
         />
 
-        <div className="mission-left">
+        <div ref={leftRef} className="mission-left">
           <button type="button" className="mission-card mission-catalog" onClick={() => catalog.current?.showModal()}>
             <span>{selected?.name ?? "Tracked objects"}</span>
             <span className="mission-reading-note">{selected ? `${selected.id} · Browse objects` : "Browse objects"}</span>
@@ -189,7 +208,7 @@ export default function MissionPage() {
           <OrbitalReadings satellite={selected} trajectory={traj} event={activeEvent} />
         </div>
 
-        <div className="mission-right">
+        <div ref={rightRef} className="mission-right">
           <AgentPanel
             inv={inv?.id === activeInvId && inv?.event_id === activeEventId ? inv : null}
             event={activeEvent}
