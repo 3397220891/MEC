@@ -4,6 +4,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { api } from "@/lib/api";
 import type { CloseEvent, ComparisonRow, Investigation, MissionState, Separation, Step } from "@/lib/types";
+import { DecisionTiming, STATUS_LABEL } from "./MissionReadings";
 import EventQuestions from "./EventQuestions";
 import SeparationChart from "./SeparationChart";
 
@@ -99,11 +100,13 @@ const ACTION_LABEL = {
 };
 const RISK_STYLE = { HIGH: "text-red", ELEVATED: "text-amber", LOW: "text-ok" };
 
-export default function AgentPanel({ inv, event, events, investigations, onSelectEvent, onStart, onOpenReport, onDecided, llmAvailable, thresholds }: {
+export default function AgentPanel({ inv, event, events, investigations, onSelectEvent, onReviewEvent, reviewRequest, onStart, onOpenReport, onDecided, llmAvailable, thresholds }: {
   inv: Investigation | null; event: CloseEvent | null; onStart: (eventId: string) => void; onOpenReport: () => void;
   events: CloseEvent[]; investigations: MissionState["investigations"]; onSelectEvent: (id: string) => void;
+  onReviewEvent: (id: string) => void; reviewRequest: { eventId: string } | null;
   onDecided: () => void; llmAvailable: boolean; thresholds?: MissionState["thresholds_km"];
 }) {
+  const approval = useRef<HTMLDetailsElement>(null);
   const details = useRef<HTMLDetailsElement>(null);
   const [operator, setOperator] = useState("");
   const [note, setNote] = useState("");
@@ -115,6 +118,17 @@ export default function AgentPanel({ inv, event, events, investigations, onSelec
   const rec = inv?.recommendation ?? null;
   const featured = rec?.recommended_maneuver_id || comparison?.best_option || "";
   const running = inv && (inv.status === "running" || inv.status === "queued");
+
+  const recommended = comparison?.options.find((option) => option.option_id === rec?.recommended_maneuver_id && option.option_id !== "NO_MANEUVER");
+  const awaitingApproval = inv?.status === "awaiting_approval";
+
+  useEffect(() => {
+    const panel = approval.current;
+    if (!panel || !awaitingApproval || reviewRequest?.eventId !== event?.id) return;
+    panel.open = true;
+    panel.querySelector("summary")?.focus({ preventScroll: true });
+    panel.scrollIntoView({ block: "nearest" });
+  }, [awaitingApproval, event?.id, reviewRequest]);
 
   useEffect(() => {
     if (!inv || !event || running || inv.event_id !== event.id) {
@@ -155,6 +169,23 @@ export default function AgentPanel({ inv, event, events, investigations, onSelec
     <aside className="panel flex min-h-0 flex-col p-3">
       <h2 className="px-1 text-base font-semibold">Collision Assistant</h2>
 
+      {event && (
+        <section className="mt-2 rounded-lg border border-line bg-panel-2/50 p-2.5 text-xs">
+          <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+            <span className={`font-semibold ${event.severity === "RED" ? "text-red" : event.severity === "AMBER" ? "text-amber" : "text-watch"}`}>{event.severity}</span>
+            <span className="font-mono text-muted">{event.id}</span>
+            <span className="text-ink-2">{inv ? STATUS_LABEL[inv.status] : "Investigation unavailable"}</span>
+          </div>
+          {rec && <p className="mt-2 font-medium leading-snug text-ink">{rec.headline}</p>}
+          {recommended && (
+            <p className="mt-1 text-ink-2">
+              <strong className="text-ink">{recommended.predicted_miss_km.toFixed(3)} km</strong> predicted miss · {recommended.delta_v_m_s} m/s Δv · {recommended.new_conjunctions} new alerts
+            </p>
+          )}
+          <DecisionTiming event={event} option={recommended} />
+        </section>
+      )}
+
       {!event && (
         <div className="mt-6 text-center text-sm text-muted">
           <div className="mb-2 text-3xl">⌖</div>
@@ -167,7 +198,7 @@ export default function AgentPanel({ inv, event, events, investigations, onSelec
         <details ref={details} className="mt-2 rounded-lg border border-line bg-panel-2/50 p-2">
           <summary className="cursor-pointer text-xs text-ink-2">
             <span className="font-medium text-ink">Investigation details</span>
-            <span className="ml-2 font-mono text-muted">{event.id}</span>
+            <span className="ml-2 whitespace-nowrap font-mono text-muted">{event.id}</span>
           </summary>
           <div className="scroll-thin max-h-72 overflow-y-auto overflow-x-hidden">
             <div className="mt-2 text-xs text-muted">{llmAvailable ? "AI agent available" : "Rule-based planner"}</div>
@@ -180,10 +211,10 @@ export default function AgentPanel({ inv, event, events, investigations, onSelec
                 <span className="ml-auto text-muted">{event.data_label}</span>
               </div>
               <div className="mt-1 text-ink-2">{event.primary_name} × {event.secondary_name}</div>
-              <div className="mt-1 grid grid-cols-3 gap-2">
-                <div><div className="label">Miss</div><div className="text-lg font-semibold tabular-nums">{event.miss_km.toFixed(3)}<span className="ml-0.5 text-[10px] text-ink-2">km</span></div></div>
-                <div><div className="label">Rel. speed</div><div className="text-lg font-semibold tabular-nums">{event.rel_speed_km_s.toFixed(2)}<span className="ml-0.5 text-[10px] text-ink-2">km/s</span></div></div>
-                <div><div className="label">TCA</div><div className="text-lg font-semibold tabular-nums">{event.tca_utc.slice(11, 19)}<span className="ml-0.5 text-[10px] text-ink-2">Z</span></div></div>
+              <div className="mt-2 flex flex-wrap gap-x-3 gap-y-1">
+                <div><div className="label">Miss</div><div className="whitespace-nowrap text-sm font-semibold tabular-nums">{event.miss_km.toFixed(3)}<span className="ml-0.5 text-[10px] text-ink-2">km</span></div></div>
+                <div><div className="label">Rel. speed</div><div className="whitespace-nowrap text-sm font-semibold tabular-nums">{event.rel_speed_km_s.toFixed(2)}<span className="ml-0.5 text-[10px] text-ink-2">km/s</span></div></div>
+                <div><div className="label">TCA</div><div className="whitespace-nowrap text-sm font-semibold tabular-nums">{event.tca_utc.slice(11, 19)}<span className="ml-0.5 text-[10px] text-ink-2">Z</span></div></div>
               </div>
               {!inv && (
                 <button onClick={() => onStart(event.id)} className="mt-2 w-full rounded-md bg-accent/90 py-1.5 text-xs font-semibold text-black hover:bg-accent">
@@ -298,8 +329,8 @@ export default function AgentPanel({ inv, event, events, investigations, onSelec
         </details>
       )}
 
-      {inv?.status === "awaiting_approval" && (
-        <details className="mt-2 rounded-xl border border-amber/40 bg-amber/5 p-3">
+      {awaitingApproval && (
+        <details key={inv.id} ref={approval} className="mt-2 rounded-xl border border-amber/40 bg-amber/5 p-3">
           <summary className="cursor-pointer text-sm font-semibold text-amber">Review pending decision</summary>
           <p className="mt-1 text-[11px] text-ink-2">Approving records the decision for audit. OrbitalGuard has no uplink and cannot command any spacecraft.</p>
           <div className="mt-2 flex gap-2">
@@ -309,8 +340,8 @@ export default function AgentPanel({ inv, event, events, investigations, onSelec
               className="w-1/2 rounded-md border border-line bg-panel-2 px-2 py-1 text-xs outline-none focus:border-line-strong" />
           </div>
           <div className="mt-2 flex gap-2">
-            <button disabled={busy} onClick={() => decide("approve")} className="flex-1 rounded-md bg-ok/85 py-1.5 text-xs font-semibold text-black hover:bg-ok disabled:opacity-50">Approve</button>
-            <button disabled={busy} onClick={() => decide("reject")} className="flex-1 rounded-md border border-red/60 py-1.5 text-xs font-semibold text-red hover:bg-red/10 disabled:opacity-50">Reject</button>
+            <button disabled={busy} onClick={() => decide("approve")} className="flex-1 rounded-md bg-ok/85 py-1.5 text-xs font-semibold text-black hover:bg-ok disabled:opacity-50">Record approval</button>
+            <button disabled={busy} onClick={() => decide("reject")} className="flex-1 rounded-md border border-red/60 py-1.5 text-xs font-semibold text-red hover:bg-red/10 disabled:opacity-50">Record rejection</button>
           </div>
           {err && <p className="mt-1 text-[11px] text-red">{err}</p>}
         </details>
@@ -318,10 +349,10 @@ export default function AgentPanel({ inv, event, events, investigations, onSelec
 
     </aside>
 
-    <aside className="panel flex min-h-0 flex-col p-3" aria-label="Agent Group Chat">
+    <aside className="panel mission-group-chat flex min-h-0 flex-col p-3" aria-label="Agent Group Chat">
       <h2 className="px-1 text-base font-semibold">Agent Group Chat</h2>
       {event && (event.severity === "RED" || event.severity === "AMBER") && (
-        <EventQuestions key={event.scenario_id} event={event} events={events} investigations={investigations} onSelectEvent={onSelectEvent} investigation={inv} thresholds={thresholds}
+        <EventQuestions key={event.scenario_id} event={event} events={events} investigations={investigations} onSelectEvent={onSelectEvent} onReviewEvent={onReviewEvent} investigation={inv} thresholds={thresholds}
           options={comparison?.options ?? []} optionId={featured} onEvidence={(id) => {
             if (details.current) details.current.open = true;
             document.getElementById(id)?.scrollIntoView({ block: "nearest", inline: "nearest" });

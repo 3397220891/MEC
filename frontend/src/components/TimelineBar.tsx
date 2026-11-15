@@ -1,23 +1,13 @@
 "use client";
 
 import { clock, fmtDuration, seek, useClockTime, utcAt } from "@/lib/clock";
-import type { CloseEvent, InvestigationSummary } from "@/lib/types";
+import type { CloseEvent } from "@/lib/types";
 
 const SPEEDS = [1, 10, 60, 300];
 const SEV = { RED: "text-red", AMBER: "text-amber", WATCH: "text-watch" } as const;
-const SEV_BG = { RED: "bg-red", AMBER: "bg-amber", WATCH: "bg-watch" } as const;
 const SEV_ICON = { RED: "▲", AMBER: "◆", WATCH: "●" } as const;
-const STATUS_LABEL: Record<string, string> = {
-  queued: "Queued",
-  running: "Agent investigating…",
-  awaiting_approval: "Awaiting operator approval",
-  approved: "Approved (recorded)",
-  rejected: "Rejected",
-  failed: "Failed",
-};
-
-export default function TimelineBar({ horizon, epoch, events, investigations, activeEventId, onSelectEvent }: {
-  horizon: number; epoch: string; events: CloseEvent[]; investigations: InvestigationSummary[];
+export default function TimelineBar({ horizon, epoch, events, activeEventId, onSelectEvent }: {
+  horizon: number; epoch: string; events: CloseEvent[];
   activeEventId: string | null; onSelectEvent: (id: string) => void;
 }) {
   const t = useClockTime(10);
@@ -25,11 +15,11 @@ export default function TimelineBar({ horizon, epoch, events, investigations, ac
   const pct = (x: number) => `${(100 * x) / horizon}%`;
 
   return (
-    <section className="panel mission-timeline grid min-h-0 gap-3 p-3">
+    <section className="panel mission-timeline min-h-0 p-3">
       <div className="flex min-w-0 flex-col gap-2">
         <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
           <h2 className="text-sm font-semibold">Mission timeline</h2>
-          <span className="font-mono text-sm tabular-nums text-ink">{utcAt(epoch, t)} UTC</span>
+          <span className="font-mono text-sm tabular-nums text-ink">{utcAt(epoch, t)} UTC · simulation</span>
           <span className="font-mono text-xs tabular-nums text-muted">{fmtDuration(t)}</span>
           <div className="ml-auto flex items-center gap-1">
             <button
@@ -79,6 +69,7 @@ export default function TimelineBar({ horizon, epoch, events, investigations, ac
           {events.map((e) => (
             <button
               key={e.id}
+              aria-pressed={e.id === activeEventId}
               title={`${e.id}: ${e.primary_name} × ${e.secondary_name}, ${e.miss_km.toFixed(3)} km`}
               onClick={(ev) => {
                 ev.stopPropagation();
@@ -95,40 +86,6 @@ export default function TimelineBar({ horizon, epoch, events, investigations, ac
         </div>
       </div>
 
-      <div className="flex min-h-0 flex-col">
-        <div className="mb-1 flex items-center justify-between">
-          <h2 className="text-sm font-semibold">Close-approach alerts</h2>
-          <span className="label">{events.length} flagged</span>
-        </div>
-        <ul className="scroll-thin max-h-16 min-h-0 flex-1 space-y-1 overflow-y-auto pr-1">
-          {events.length === 0 && <li className="text-xs text-muted">No objects inside the screening volume. Nominal operations.</li>}
-          {events.map((e) => {
-            const inv = investigations.find((i) => i.event_id === e.id);
-            return (
-              <li key={e.id}>
-                <button
-                  onClick={() => {
-                    onSelectEvent(e.id);
-                    seek(e.tca_s - 300);
-                  }}
-                  className={`flex w-full items-center gap-2 rounded-lg border px-2 py-1 text-left text-xs ${e.id === activeEventId ? "border-line-strong bg-panel-2" : "border-transparent hover:bg-panel-2/60"}`}
-                >
-                  <span className={`h-2 w-2 shrink-0 rounded-full ${SEV_BG[e.severity]} ${e.severity === "RED" ? "alert-pulse" : ""}`} />
-                  <span className={`w-14 shrink-0 font-semibold ${SEV[e.severity]}`}>{e.severity}</span>
-                  <span className="min-w-0 flex-1 truncate">
-                    {e.primary_name} × {e.secondary_name}
-                    <span className="block text-[10px] text-muted">{inv ? STATUS_LABEL[inv.status] ?? inv.status : "Not investigated"}</span>
-                  </span>
-                  <span className="shrink-0 text-right tabular-nums">
-                    {e.miss_km.toFixed(3)} km
-                    <span className="block text-[10px] text-muted">{e.tca_utc.slice(11, 19)}Z</span>
-                  </span>
-                </button>
-              </li>
-            );
-          })}
-        </ul>
-      </div>
     </section>
   );
 }
