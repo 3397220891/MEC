@@ -4,7 +4,7 @@ import dynamic from "next/dynamic";
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import AgentPanel from "@/components/AgentPanel";
-import { OrbitalReadings, TrackingSummary } from "@/components/MissionReadings";
+import { AlertQueue, OrbitalReadings, TrackingSummary } from "@/components/MissionReadings";
 import ObjectPanel from "@/components/ObjectPanel";
 import ReportModal from "@/components/ReportModal";
 import TimelineBar from "@/components/TimelineBar";
@@ -30,6 +30,7 @@ export default function MissionPage() {
   const [error, setError] = useState<string | null>(null);
   const catalog = useRef<HTMLDialogElement>(null);
   const [demoCallsign, setDemoCallsign] = useState<string | null>(null);
+  const [reviewRequest, setReviewRequest] = useState<{ eventId: string } | null>(null);
   const [reportOpen, setReportOpen] = useState(false);
   const [plan, setPlan] = useState<ManeuverPlan | null>(null);
 
@@ -135,9 +136,15 @@ export default function MissionPage() {
 
   function selectEvent(id: string) {
     setReportOpen(false);
+    setReviewRequest(null);
     setActiveEventId(id);
     const event = state?.events.find((item) => item.id === id);
     if (event) setSelectedId(event.primary_id);
+  }
+
+  function reviewEvent(id: string) {
+    selectEvent(id);
+    setReviewRequest({ eventId: id });
   }
 
   return (
@@ -160,6 +167,9 @@ export default function MissionPage() {
         </div>
       </header>
 
+      {state && <AlertQueue events={[...state.events].sort((a, b) => SEV_RANK[a.severity] - SEV_RANK[b.severity] || a.tca_s - b.tca_s)}
+        investigations={state.investigations} selectedId={activeEventId} onSelect={selectEvent} onReview={reviewEvent} />}
+
       <section className="mission-stage" aria-label="Mission control">
         <div className="mission-scene" aria-label="Interactive orbital view">
           <Globe traj={traj} objects={state?.objects ?? []} selectedId={selectedId} onSelect={selectObject} event={activeEvent} plan={plan} />
@@ -181,11 +191,13 @@ export default function MissionPage() {
 
         <div className="mission-right">
           <AgentPanel
-            inv={inv?.event_id === activeEventId ? inv : null}
+            inv={inv?.id === activeInvId && inv?.event_id === activeEventId ? inv : null}
             event={activeEvent}
             events={state?.events ?? []}
             investigations={state?.investigations ?? []}
             onSelectEvent={selectEvent}
+            onReviewEvent={reviewEvent}
+            reviewRequest={reviewRequest}
             onStart={startInvestigation}
             onOpenReport={() => setReportOpen(true)}
             onDecided={() => {
@@ -209,7 +221,6 @@ export default function MissionPage() {
               horizon={state.horizon_s}
               epoch={state.epoch_utc}
               events={state.events}
-              investigations={state.investigations}
               activeEventId={activeEventId}
               onSelectEvent={selectEvent}
             />

@@ -90,11 +90,12 @@ function questionTopic(prompt: string): Topic | undefined {
   if (/maneuver|manoeuvre|delta.?v|compare|option|机动|方案/.test(text)) return "maneuver";
 }
 
-export default function EventQuestions({ event, events, investigations, onSelectEvent, investigation, thresholds, options, optionId, onEvidence, onShowManeuver }: {
+export default function EventQuestions({ event, events, investigations, onSelectEvent, onReviewEvent, investigation, thresholds, options, optionId, onEvidence, onShowManeuver }: {
   event: CloseEvent;
   events: CloseEvent[];
   investigations: MissionState["investigations"];
   onSelectEvent: (id: string) => void;
+  onReviewEvent: (id: string) => void;
   investigation: Investigation | null;
   thresholds?: MissionState["thresholds_km"];
   options: ComparisonRow[];
@@ -172,7 +173,7 @@ export default function EventQuestions({ event, events, investigations, onSelect
   }
 
   return (
-    <section aria-label="Collision chat" className="mt-3 shrink-0 overflow-hidden rounded-xl border border-line bg-bg/80">
+    <section aria-label="Collision chat" className="mt-3 flex min-h-0 flex-col overflow-hidden rounded-xl border border-line bg-bg/80">
       <div className="flex items-center gap-2 border-b border-line px-3 py-2.5 text-xs">
         <span className={`h-1.5 w-1.5 rounded-full ${event.severity === "RED" ? "bg-red" : "bg-amber"}`} aria-hidden="true" />
         <span className="font-semibold text-ink">{event.severity}</span>
@@ -180,8 +181,20 @@ export default function EventQuestions({ event, events, investigations, onSelect
           {event.primary_name} × {event.secondary_name}
         </span>
       </div>
+      <div className="shrink-0 border-b border-accent/35 bg-accent/5 px-3 py-2 text-xs text-ink-2">
+        <p className="font-semibold text-accent">Mission Director</p>
+        {priority ? (
+          <>
+            <p>Review <strong className="text-ink">{agentName(priority.id)}</strong> first. This {priority.severity} alert is awaiting operator approval.</p>
+            <button type="button" onClick={() => onReviewEvent(priority.id)}
+              className="mt-1.5 text-watch underline underline-offset-2">
+              Review priority alert ↗
+            </button>
+          </>
+        ) : <p>No alert is awaiting approval. Continue monitoring active investigations.</p>}
+      </div>
       <div ref={messages} role="log" aria-label="Chat messages" tabIndex={0}
-        className="scroll-thin max-h-60 min-h-32 space-y-3 overflow-y-auto px-3 py-4 text-xs leading-relaxed">
+        className="scroll-thin min-h-32 flex-1 space-y-3 overflow-y-auto px-3 py-4 text-xs leading-relaxed">
         {alerts.map((alert) => (
           <div key={alert.id} className="flex items-start gap-2">
             <span aria-hidden="true" className={`grid size-6 shrink-0 place-items-center rounded-md border border-line bg-panel-2 ${alert.severity === "RED" ? "text-red" : "text-amber"}`}>◎</span>
@@ -197,19 +210,6 @@ export default function EventQuestions({ event, events, investigations, onSelect
             </div>
           </div>
         ))}
-        <div className="rounded-lg border border-accent/35 bg-accent/5 px-3 py-2.5 text-ink-2">
-          <p className="font-semibold text-accent">Mission Director</p>
-          {priority ? (
-            <>
-              <p>Review <strong className="text-ink">{agentName(priority.id)}</strong> first. This {priority.severity} alert is awaiting operator approval.</p>
-              <button type="button" onClick={() => onSelectEvent(priority.id)}
-                className="mt-1.5 text-watch underline underline-offset-2">
-                Select priority alert ↗
-              </button>
-            </>
-          ) : <p>No alert is awaiting approval. Continue monitoring active investigations.</p>}
-          <p className="mt-1 text-muted">Final approval belongs to the operator.</p>
-        </div>
         {exchanges.map((entry) => (
           <div key={entry.key} className="space-y-2.5">
             <p className="ml-auto w-fit max-w-[90%] break-words rounded-xl rounded-br-sm border border-line bg-panel-2 px-2.5 py-1.5 text-ink">
@@ -281,7 +281,7 @@ export default function EventQuestions({ event, events, investigations, onSelect
           </div>
         ))}
       </div>
-      <div className="border-t border-line bg-panel-2/35 p-2.5">
+      <div className="shrink-0 border-t border-line bg-panel-2/35 p-2.5">
         <div className="mb-2 flex items-center gap-1.5 text-[11px] text-muted" role="radiogroup" aria-label="Ask">
           <span>Ask</span>
           {(["event", "director"] as const).map((r) => (
