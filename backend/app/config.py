@@ -15,8 +15,11 @@ def _f(name: str, default: float) -> float:
         return default
 
 
-MODEL = os.getenv("ORBITALGUARD_MODEL", "claude-opus-5-5")
-EFFORT = os.getenv("ORBITALGUARD_EFFORT", "medium")
+# Any OpenAI-compatible chat API: DeepSeek by default; point LLM_BASE_URL at Ollama
+# (http://localhost:11434/v1) to run a local model instead.
+LLM_BASE_URL = os.getenv("LLM_BASE_URL", "https://api.deepseek.com")
+LLM_API_KEY = os.getenv("LLM_API_KEY") or os.getenv("DEEPSEEK_API_KEY") or ""
+MODEL = os.getenv("ORBITALGUARD_MODEL", "deepseek-v4-flash")
 AGENT_MODE = os.getenv("ORBITALGUARD_AGENT_MODE", "auto")  # auto | llm | offline
 DB_PATH = Path(os.getenv("ORBITALGUARD_DB", Path(__file__).resolve().parent.parent / "orbitalguard.db"))
 
@@ -35,7 +38,7 @@ CORS_ORIGINS = os.getenv("CORS_ORIGINS", "http://localhost:3000,http://127.0.0.1
 def llm_configured() -> bool:
     if AGENT_MODE == "offline":
         return False
-    return bool(os.getenv("ANTHROPIC_API_KEY") or os.getenv("ANTHROPIC_AUTH_TOKEN"))
+    return bool(LLM_API_KEY)
 
 
 def severity(miss_km: float) -> str:

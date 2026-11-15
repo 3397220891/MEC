@@ -1,13 +1,14 @@
-"""Investigation orchestration: Claude tool-use loop with guards, plus fallback."""
+"""Investigation orchestration: LLM tool-use loop (any OpenAI-compatible API) with guards, plus fallback."""
 from __future__ import annotations
 
 import json
 import logging
+import re
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeout
 
-import anthropic
+import openai
 
 from .. import config, db
 from ..services.state import STORE
@@ -46,7 +47,13 @@ not call a maneuver "safe"; describe predicted miss distances under the stated m
 - You are advisory only. Nothing is executed; a human operator must approve any hypothetical action.
 
 Final answer: a JSON object matching the required schema. Keep each rationale claim to one or two sentences. Use \
-recommended_maneuver_id = "" unless the action is PREPARE_MANEUVER_FOR_APPROVAL or you name a contingency option."""
+recommended_maneuver_id = "" unless the action is PREPARE_MANEUVER_FOR_APPROVAL or you name a contingency option.
+Reply with the JSON object only (no prose, no code fences). Required JSON schema:
+""" + json.dumps(RECOMMENDATION_SCHEMA)
+
+# OpenAI-style function definitions built from the tool schemas.
+OPENAI_TOOLS = [{"type": "function", "function": {"name": t["name"], "description": t["description"],
+                                                  "parameters": t["input_schema"]}} for t in TOOL_SCHEMAS]
 
 
 def get_context(inv_id: str) -> InvestigationContext | None:
@@ -97,7 +104,7 @@ def _run(ctx: InvestigationContext, mode: str) -> None:
                 _update(ctx.id, mode=mode)
                 rec = run_offline(ctx, str(e))
         else:
-            rec = run_offline(ctx, "LLM not configured (no ANTHROPIC_API_KEY)")
+            rec = run_offline(ctx, "LLM not configured (no DEEPSEEK_API_KEY / LLM_API_KEY)")
         _finalize(ctx, rec, mode)
     except Exception as e:  # last-resort guard: never leave an investigation hanging
         log.exception("investigation failed")
@@ -127,22 +134,43 @@ def _tool_exec(ctx, name, inp):
         return {"error": f"tool timed out after {config.TOOL_TIMEOUT_S}s"}, None, True
 
 
-def _log_reasoning(ctx, response) -> None:
-    for b in response.content:
-        if b.type == "thinking" and getattr(b, "thinking", ""):
-            ctx.log("thought", output={"text": b.thinking})
-        elif b.type == "text" and response.stop_reason == "tool_use" and b.text.strip():
-            ctx.log("thought", output={"text": b.text})
+def _log_reasoning(ctx, msg) -> None:
+    # DeepSeek thinking models return their reasoning in `reasoning_content`; others may put notes in `content`.
+    thinking = getattr(msg, "reasoning_content", None) or (getattr(msg, "model_extra", None) or {}).get("reasoning_content")
+    if thinking:
+        ctx.log("thought", output={"text": thinking})
+    if msg.tool_calls and (msg.content or "").strip():
+        ctx.log("thought", output={"text": msg.content})
 
 
-def _run_llm(ctx: InvestigationContext) -> dict:
-    client = anthropic.Anthropic(timeout=90.0, max_retries=2)
+def _parse_json(text: str) -> dict | None:
+    text = re.sub(r"^```(?:json)?\s*|\s*```$", "", text.strip())
+    try:
+        value = json.loads(text)
+    except json.JSONDecodeError:
+        m = re.search(r"\{.*\}", text, re.S)
+        if not m:
+            return None
+        try:
+            value = json.loads(m.group(0))
+        except json.JSONDecodeError:
+            return None
+    return value if isinstance(value, dict) else None
+
+
+def make_client() -> openai.OpenAI:
+    return openai.OpenAI(base_url=config.LLM_BASE_URL, api_key=config.LLM_API_KEY, timeout=90.0, max_retries=2)
+
+
+def _run_llm(ctx: InvestigationContext, client: openai.OpenAI | None = None) -> dict:
+    client = client or make_client()
     ev = ctx.event
     brief = {k: ev[k] for k in ("id", "primary_id", "primary_name", "secondary_id", "secondary_name", "tca_utc", "tca_s",
                                 "miss_km", "rel_speed_km_s", "miss_ric_km", "severity", "data_label", "detected_by")}
     brief["scenario_epoch_utc"] = ctx.mission.epoch.iso()
     brief["horizon_min"] = ctx.mission.horizon_s / 60
-    messages: list = [{"role": "user", "content": "Close-approach event flagged by monitoring:\n" + json.dumps(brief, indent=2)
+    messages: list = [{"role": "system", "content": SYSTEM_PROMPT},
+                      {"role": "user", "content": "Close-approach event flagged by monitoring:\n" + json.dumps(brief, indent=2)
                        + "\n\nInvestigate it and give your recommendation."}]
     deadline = time.monotonic() + config.AGENT_WALL_CLOCK_S
     tool_calls, repaired, tools_closed = 0, False, False
@@ -151,57 +179,54 @@ def _run_llm(ctx: InvestigationContext) -> dict:
         if time.monotonic() > deadline:
             raise _FallbackNeeded(f"agent wall-clock limit {config.AGENT_WALL_CLOCK_S:.0f}s exceeded")
         try:
-            response = client.beta.messages.create(
+            response = client.chat.completions.create(
                 model=config.MODEL,
-                max_tokens=16000,
-                system=SYSTEM_PROMPT,
-                tools=TOOL_SCHEMAS,
-                tool_choice={"type": "none"} if tools_closed else {"type": "auto"},
+                max_tokens=8000,
                 messages=messages,
-                thinking={"type": "adaptive", "display": "summarized"},
-                output_config={"effort": config.EFFORT, "format": {"type": "json_schema", "schema": RECOMMENDATION_SCHEMA}},
-                betas=["server-side-fallback-2026-07-01"],
-                fallbacks="default",
+                tools=OPENAI_TOOLS,
+                tool_choice="none" if tools_closed else "auto",
             )
-        except anthropic.AuthenticationError as e:
+        except openai.AuthenticationError as e:
             raise _FallbackNeeded(f"LLM authentication failed ({e.status_code})")
-        except anthropic.RateLimitError:
+        except openai.RateLimitError:
             raise _FallbackNeeded("LLM rate limited")
-        except anthropic.APIStatusError as e:
+        except openai.APIStatusError as e:
             raise _FallbackNeeded(f"LLM API error {e.status_code}: {str(e.message)[:200]}")
-        except anthropic.APIConnectionError:
+        except openai.APIConnectionError:
             raise _FallbackNeeded("LLM unreachable (connection error/timeout)")
 
-        _log_reasoning(ctx, response)
-        if response.stop_reason == "refusal":
-            raise _FallbackNeeded("LLM declined the request")
-        if response.stop_reason == "max_tokens":
+        if not response.choices:
+            raise _FallbackNeeded("LLM returned no choices")
+        choice = response.choices[0]
+        msg = choice.message
+        _log_reasoning(ctx, msg)
+        if choice.finish_reason == "length":
             raise _FallbackNeeded("LLM response truncated (max_tokens)")
-        messages.append({"role": "assistant", "content": response.content})
+        if choice.finish_reason == "content_filter":
+            raise _FallbackNeeded("LLM response blocked by content filter")
+        # Keep the full assistant turn (incl. reasoning_content / tool_calls) so the API sees a consistent history.
+        messages.append(msg.model_dump(exclude_none=True))
 
-        if response.stop_reason == "tool_use":
-            results = []
-            for b in response.content:
-                if b.type != "tool_use":
-                    continue
+        if msg.tool_calls:
+            for call in msg.tool_calls:
                 tool_calls += 1
                 if tool_calls > config.AGENT_MAX_TOOL_CALLS:
                     payload, is_err = {"error": "tool budget exhausted; produce the final JSON answer now"}, True
                     tools_closed = True
                 else:
-                    payload, _, is_err = _tool_exec(ctx, b.name, b.input)
-                results.append({"type": "tool_result", "tool_use_id": b.id, "content": json.dumps(payload), "is_error": is_err})
-            messages.append({"role": "user", "content": results})
+                    try:
+                        args = json.loads(call.function.arguments or "{}")
+                    except json.JSONDecodeError:
+                        args = None
+                    if not isinstance(args, dict):
+                        payload, is_err = {"error": "tool arguments were not a valid JSON object"}, True
+                    else:
+                        payload, _, is_err = _tool_exec(ctx, call.function.name, args)
+                messages.append({"role": "tool", "tool_call_id": call.id, "content": json.dumps(payload)})
             continue
 
-        if response.stop_reason == "pause_turn":
-            continue
-
-        text = "".join(b.text for b in response.content if b.type == "text").strip()
-        try:
-            rec = json.loads(text)
-        except json.JSONDecodeError:
-            rec = None
+        text = (msg.content or "").strip()
+        rec = _parse_json(text)
         if rec is not None:
             check = validate_recommendation(ctx, rec)
             if check["valid"] or repaired:

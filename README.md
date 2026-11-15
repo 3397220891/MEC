@@ -3,7 +3,7 @@
 An intelligent agent for satellite collision risk analysis and mission decision support. **Advisory only:** the system has no capability to command any spacecraft.
 
 - **Physics (deterministic):** SGP4 propagation → all-pairs screening → TCA refinement → impulsive Δv maneuver model (SGP4 baseline + two-body/J2 differential correction) → re-screening for secondary conjunctions.
-- **Agent:** Claude (`claude-opus-5-5`) runs a tool-use loop over 6 analysis tools. Every tool result becomes evidence `E#`. The final recommendation is structured JSON, and the server validates its citations and checks its numbers against the cited tool outputs.
+- **Agent:** an LLM (DeepSeek by default, or any OpenAI-compatible API such as a local Ollama model) runs a tool-use loop over 6 analysis tools. Every tool result becomes evidence `E#`. The final recommendation is structured JSON, and the server validates its citations and checks its numbers against the cited tool outputs.
 - **Fallback:** without an API key, or if the LLM fails, a deterministic planner runs the same tools and produces the same report schema, clearly labeled.
 - **Human in the loop:** approve/reject is recorded in SQLite as an audit record only.
 
@@ -17,7 +17,7 @@ cd backend
 python -m venv .venv
 .venv\Scripts\activate            # macOS/Linux: source .venv/bin/activate
 pip install -r requirements.txt
-copy .env.example .env            # optional: set ANTHROPIC_API_KEY to enable the Claude agent
+copy .env.example .env            # optional: set DEEPSEEK_API_KEY to enable the LLM agent
 uvicorn app.main:app --port 8000  # API docs: http://localhost:8000/docs
 
 # 2. Frontend (Node 20+), in a second terminal
@@ -40,9 +40,9 @@ cd backend && pytest -q
 ## Configuration (`backend/.env`)
 | Variable | Default | Meaning |
 |---|---|---|
-| `ANTHROPIC_API_KEY` | — | Enables the Claude agent; without it the fallback planner runs |
-| `ORBITALGUARD_MODEL` | `claude-opus-5-5` | Agent model |
-| `ORBITALGUARD_EFFORT` | `medium` | `low` is faster for live demos |
+| `DEEPSEEK_API_KEY` (or `LLM_API_KEY`) | — | Enables the LLM agent; without it the fallback planner runs |
+| `LLM_BASE_URL` | `https://api.deepseek.com` | Any OpenAI-compatible endpoint; `http://localhost:11434/v1` for Ollama |
+| `ORBITALGUARD_MODEL` | `deepseek-v4-flash` | Agent model (check the exact name in the provider console) |
 | `ORBITALGUARD_AGENT_MODE` | `auto` | `offline` forces the fallback planner |
 | `SCREEN_THRESHOLD_KM` / `RED_THRESHOLD_KM` / `AMBER_THRESHOLD_KM` | 5 / 1 / 2.5 | Screening and severity thresholds |
 

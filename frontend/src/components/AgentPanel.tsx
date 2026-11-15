@@ -152,7 +152,7 @@ export default function AgentPanel({ inv, event, onStart, onOpenReport, onDecide
       <div className="flex items-center gap-2">
         <h2 className="text-sm font-semibold">AI collision investigation</h2>
         <span className={`ml-auto rounded px-1.5 py-0.5 text-[10px] font-semibold ${llmAvailable ? "bg-ok/15 text-ok" : "bg-amber/15 text-amber"}`}>
-          {llmAvailable ? "● CLAUDE AGENT" : "◆ FALLBACK PLANNER"}
+          {llmAvailable ? "● LLM AGENT" : "◆ FALLBACK PLANNER"}
         </span>
       </div>
 
@@ -192,7 +192,7 @@ export default function AgentPanel({ inv, event, onStart, onOpenReport, onDecide
           <div className="flex items-center gap-2 text-xs">
             <span className="font-mono">{inv.id}</span>
             <span className={`rounded px-1.5 py-0.5 text-[10px] font-semibold ${STATUS_STYLE[inv.status]}`}>{inv.status.replace("_", " ").toUpperCase()}</span>
-            <span className="text-muted">{inv.mode === "llm" ? inv.model : inv.mode === "llm+fallback" ? "Claude → fallback" : "deterministic planner"}</span>
+            <span className="text-muted">{inv.mode === "llm" ? inv.model : inv.mode === "llm+fallback" ? "LLM → fallback" : "deterministic planner"}</span>
             <span className="ml-auto text-muted">{toolCount} tool calls</span>
           </div>
 
