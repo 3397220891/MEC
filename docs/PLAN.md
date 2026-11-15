@@ -12,7 +12,7 @@
 | SGP4 propagation + close-approach screening | **Feasible (4–6 h)** | The `sgp4` library does the heavy lifting. Use a coarse grid plus bounded scalar refinement. |
 | Engineered demo conjunctions | **Feasible, needs care** | Build synthetic objects with `Satrec.sgp4init`, then solve for the debris elements so a miss of about 150 m happens at a chosen time. Deterministic. |
 | Maneuver simulation | **Feasible if simplified** | Impulsive Δv + two-body/J2 numerical integration, applied as a *differential correction* on top of the SGP4 baseline. Defensible and honest. Not flight-grade. |
-| Real tool-calling agent | **Feasible (Claude tool use)** | Use a manual loop so we control logging, step limits, timeouts and the approval gate. |
+| Real tool-calling agent | **Feasible (LLM tool use via OpenAI-compatible API, DeepSeek by default)** | Use a manual loop so we control logging, step limits, timeouts and the approval gate. |
 | Collision **probability** (Pc) | **Cut** | Needs covariance data that public TLEs do not have. We report *miss distance* and say clearly that this is screening, not Pc. |
 | CesiumJS | **Swap for Three.js** | Cesium + Next.js asset wiring and Ion tokens add 2–4 h of risk. React Three Fiber renders a GMST-rotated Earth with orbits in an inertial frame. It looks great and works offline. |
 | LangGraph | **Cut** | A 150-line explicit loop is easier to debug and to explain to judges. |
@@ -51,7 +51,7 @@
 │  routers: scenarios · objects · events · investigations · maneuvers │
 │  ┌──────────────┐   ┌──────────────────┐   ┌─────────────────────┐  │
 │  │ Physics core │◄──│ Agent tool layer │◄──│ Agent runner         │  │
-│  │ sgp4, screen,│   │ (validated JSON, │   │ Claude loop  ─or─    │  │
+│  │ sgp4, screen,│   │ (validated JSON, │   │ LLM loop     ─or─    │  │
 │  │ maneuver     │   │  evidence IDs)   │   │ deterministic plan   │  │
 │  └──────┬───────┘   └────────┬─────────┘   └──────────┬──────────┘  │
 │         └────────── SQLite (objects, events, runs, steps, reports) ─┘
@@ -61,7 +61,7 @@
 Key principle: **the LLM decides *what to investigate*. Only deterministic code produces numbers.** Every tool result gets an evidence ID (`E1`, `E2`, …). The final report must cite these IDs, and the server rejects citations that do not exist.
 
 ## 5. Libraries
-- **Backend:** fastapi, uvicorn, numpy, scipy (`minimize_scalar`, `solve_ivp`, `least_squares`), sgp4, anthropic, httpx, pytest. Persistence uses the stdlib `sqlite3`, so there is no ORM to fight with.
+- **Backend:** fastapi, uvicorn, numpy, scipy (`minimize_scalar`, `solve_ivp`, `least_squares`), sgp4, openai (OpenAI-compatible client for DeepSeek / Ollama), httpx, pytest. Persistence uses the stdlib `sqlite3`, so there is no ORM to fight with.
 - **Frontend:** next 15, react 19, typescript, tailwind, three, @react-three/fiber, @react-three/drei, recharts.
 
 ## 6. Directory structure
@@ -83,7 +83,7 @@ backend/
       data/snapshot_tles.txt
     agent/
       tools.py           6 tool schemas + executors
-      runner.py          Claude manual tool loop, limits, logging
+      runner.py          LLM manual tool loop, limits, logging
       offline.py         deterministic fallback agent
       report.py          evidence-checked report assembly
     services/state.py    active scenario, monitor, investigation registry
@@ -112,9 +112,9 @@ frontend/src/
 | POST | `/api/maneuvers/simulate` | Manual what-if from the UI (same engine as the agent) |
 
 ## 8. Agent architecture
-- **Loop:** Claude `messages.create` with 6 strict tools. Each `tool_use` is executed by deterministic Python, stored as a step with timing and an evidence ID, then returned as `tool_result`. Failures return `is_error: true` so the agent can recover.
-- **Guards:** ≤ 16 tool calls, 120 s wall clock, per-call input validation, a refusal and error fallback to the deterministic planner. Tools are read-only or simulation-only. There is **no actuation tool by design**.
-- **Final output:** `generate_incident_report` deterministically compiles the facts. The agent then answers with a JSON recommendation (structured output schema) that cites evidence IDs. The server validates the citations and sets status to `awaiting_approval`.
+- **Loop:** `chat.completions.create` (OpenAI-compatible; DeepSeek by default) with 6 function tools. Each tool call is executed by deterministic Python, stored as a step with timing and an evidence ID, then returned as a `tool` message. Failures return an `error` payload so the agent can recover.
+- **Guards:** ≤ 16 tool calls, 180 s wall clock, per-call input validation, a refusal and error fallback to the deterministic planner. Tools are read-only or simulation-only. There is **no actuation tool by design**.
+- **Final output:** `generate_incident_report` deterministically compiles the facts. The agent then answers with a JSON recommendation (schema given in the system prompt, validated server-side) that cites evidence IDs. The server validates the citations and sets status to `awaiting_approval`.
 - **Tools:** `get_satellite_info`, `get_trajectory`, `analyze_close_approach`, `simulate_maneuver`, `compare_maneuvers`, `generate_incident_report`.
 
 ## 9. Orbital physics strategy
@@ -174,5 +174,5 @@ frontend/src/
 1. `backend`: `python -m venv .venv && .venv\Scripts\pip install -r requirements.txt`
 2. `uvicorn app.main:app --reload --port 8000` → open `http://localhost:8000/docs`
 3. `frontend`: `npm install && npm run dev` → open `http://localhost:3000`
-4. Optional: put `ANTHROPIC_API_KEY=...` in `backend/.env` to enable the LLM agent. Without it, the fallback agent runs.
+4. Optional: put `DEEPSEEK_API_KEY=...` in `backend/.env` (or point `LLM_BASE_URL` at a local Ollama) to enable the LLM agent. Without it, the fallback agent runs.
 5. `pytest` in `backend/` before every push.
