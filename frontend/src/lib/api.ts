@@ -45,8 +45,8 @@ export const api = {
   investigation: (id: string) => req<Investigation>(`/investigations/${id}`),
   startInvestigation: (eventId: string) =>
     req<{ investigation_id: string }>("/investigations", { method: "POST", body: JSON.stringify({ event_id: eventId }) }),
-  decide: (id: string, decision: "approve" | "reject", operator: string, note: string) =>
-    req(`/investigations/${id}/decision`, { method: "POST", body: JSON.stringify({ decision, operator, note }) }),
+  decide: (id: string, decision: "approve" | "reject", note: string) =>
+    req(`/investigations/${id}/decision`, { method: "POST", body: JSON.stringify({ decision, note }) }),
   /** Simulated maneuver options (burn points at T−N) and the maneuvered path of the recommended/selected one. */
   plan: (invId: string, maneuverId?: string) =>
     req<ManeuverPlan>(`/investigations/${invId}/plan${maneuverId ? `?maneuver_id=${encodeURIComponent(maneuverId)}` : ""}`, undefined, 30000),

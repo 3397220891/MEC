@@ -13,6 +13,12 @@ _lock = threading.RLock()
 _conn: sqlite3.Connection | None = None
 
 SCHEMA = """
+CREATE TABLE IF NOT EXISTS operators (
+  id TEXT PRIMARY KEY, name TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS operator_sessions (
+  token_hash TEXT PRIMARY KEY, operator_id TEXT NOT NULL REFERENCES operators(id), expires_at INTEGER NOT NULL
+);
 CREATE TABLE IF NOT EXISTS events (
   id TEXT PRIMARY KEY, scenario_id TEXT, object_a TEXT, object_b TEXT,
   tca_s REAL, tca_utc TEXT, miss_km REAL, rel_speed_km_s REAL, severity TEXT,

@@ -1,5 +1,7 @@
 "use client";
 
+import { useState } from "react";
+import PanelToggle from "./PanelToggle";
 import { clock, fmtDuration, liveKinematics, seek, useClockTime, utcAt } from "@/lib/clock";
 import type { CloseEvent, ComparisonRow, InvestigationSummary, SatObject, Trajectories } from "@/lib/types";
 
@@ -69,15 +71,16 @@ export function AlertQueue({ events, investigations, selectedId, onSelect, onRev
   onSelect: (id: string) => void;
   onReview: (id: string) => void;
 }) {
+  const [collapsed, setCollapsed] = useState(false);
   const pending = events.filter((event) => investigations.find((item) => item.event_id === event.id)?.status === "awaiting_approval");
   return (
-    <section className="mission-alert-queue mission-card" aria-labelledby="mission-alert-heading">
+    <section className="mission-alert-queue mission-card" data-collapsed={collapsed} aria-labelledby="mission-alert-heading">
       <div className="shrink-0">
         <h2 id="mission-alert-heading" className="text-sm font-semibold">Alert queue</h2>
         <p className="text-xs text-muted">{pending.length} awaiting review</p>
       </div>
-      {events.length === 0 && <p className="text-xs text-muted">No close-approach alerts.</p>}
-      <ul className="scroll-thin flex min-w-0 flex-1 flex-wrap gap-2 overflow-auto">
+      <ul id="alert-queue-items" className={`scroll-thin min-w-0 flex-1 flex-wrap gap-2 overflow-auto ${collapsed ? "hidden" : "flex"}`}>
+        {events.length === 0 && <li className="text-xs text-muted">No close-approach alerts.</li>}
         {[...pending, ...events.filter((event) => !pending.includes(event))].map((event) => {
           const status = investigations.find((item) => item.event_id === event.id)?.status;
           const needsReview = status === "awaiting_approval";
@@ -94,6 +97,9 @@ export function AlertQueue({ events, investigations, selectedId, onSelect, onRev
           );
         })}
       </ul>
+      <div className="ml-auto shrink-0">
+        <PanelToggle label="Alert queue" target="alert-queue-items" collapsed={collapsed} onToggle={() => setCollapsed(!collapsed)} />
+      </div>
     </section>
   );
 }

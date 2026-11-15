@@ -5,6 +5,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { api } from "@/lib/api";
 import type { CloseEvent, ComparisonRow, Investigation, MissionState, Separation, Step } from "@/lib/types";
 import { DecisionTiming, STATUS_LABEL } from "./MissionReadings";
+import PanelToggle from "./PanelToggle";
 import EventQuestions from "./EventQuestions";
 import SeparationChart from "./SeparationChart";
 
@@ -109,7 +110,7 @@ export default function AgentPanel({ inv, event, events, investigations, onSelec
 }) {
   const approval = useRef<HTMLDetailsElement>(null);
   const details = useRef<HTMLDetailsElement>(null);
-  const [operator, setOperator] = useState("");
+  const [chatCollapsed, setChatCollapsed] = useState(false);
   const [note, setNote] = useState("");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
@@ -150,14 +151,10 @@ export default function AgentPanel({ inv, event, events, investigations, onSelec
 
   async function decide(d: "approve" | "reject") {
     if (!inv) return;
-    if (!operator.trim()) {
-      setErr("Enter your operator call-sign to record a decision.");
-      return;
-    }
     setBusy(true);
     setErr(null);
     try {
-      await api.decide(inv.id, d, operator.trim(), note);
+      await api.decide(inv.id, d, note);
       onDecided();
     } catch (e: any) {
       setErr(e.message);
@@ -350,10 +347,8 @@ export default function AgentPanel({ inv, event, events, investigations, onSelec
           <summary className="cursor-pointer text-sm font-semibold text-amber">Review pending decision</summary>
           <p className="mt-1 text-[11px] text-ink-2">Approving records the decision for audit. OrbitalGuard has no uplink and cannot command any spacecraft.</p>
           <div className="mt-2 flex gap-2">
-            <input value={operator} onChange={(e) => setOperator(e.target.value)} placeholder="Operator call-sign" maxLength={64}
-              className="w-1/2 rounded-md border border-line bg-panel-2 px-2 py-1 text-xs outline-none focus:border-line-strong" />
-            <input value={note} onChange={(e) => setNote(e.target.value)} placeholder="Note (optional)" maxLength={500}
-              className="w-1/2 rounded-md border border-line bg-panel-2 px-2 py-1 text-xs outline-none focus:border-line-strong" />
+            <input value={note} onChange={(e) => setNote(e.target.value)} placeholder="Note (optional)" aria-label="Decision note" maxLength={500}
+              className="w-full rounded-md border border-line bg-panel-2 px-2 py-1 text-xs outline-none focus:border-line-strong" />
           </div>
           <div className="mt-2 flex gap-2">
             <button disabled={busy} onClick={() => decide("approve")} className="flex-1 rounded-md bg-ok/85 py-1.5 text-xs font-semibold text-black hover:bg-ok disabled:opacity-50">Record approval</button>
@@ -365,8 +360,12 @@ export default function AgentPanel({ inv, event, events, investigations, onSelec
 
     </aside>
 
-    <aside className="panel mission-group-chat flex min-h-0 flex-col p-3" aria-label="Agent Group Chat">
-      <h2 className="px-1 text-base font-semibold">Agent Group Chat</h2>
+    <aside className="panel mission-group-chat flex min-h-0 flex-col p-3" aria-label="Agent Group Chat" data-collapsed={chatCollapsed}>
+      <div className="flex items-center justify-between gap-2">
+        <h2 className="px-1 text-base font-semibold">Agent Group Chat</h2>
+        <PanelToggle label="Agent Group Chat" target="agent-group-chat-content" collapsed={chatCollapsed} onToggle={() => setChatCollapsed(!chatCollapsed)} />
+      </div>
+      <div id="agent-group-chat-content" className={chatCollapsed ? "hidden" : "contents"}>
       {event && (event.severity === "RED" || event.severity === "AMBER") && (
         <EventQuestions key={event.scenario_id} event={event} events={events} investigations={investigations} onSelectEvent={onSelectEvent} onReviewEvent={onReviewEvent} investigation={inv} thresholds={thresholds}
           options={comparison?.options ?? []} optionId={featured} onShowManeuver={onShowManeuver} onEvidence={(id) => {
@@ -385,6 +384,7 @@ export default function AgentPanel({ inv, event, events, investigations, onSelec
           ))}
         </div>
       )}
+      </div>
     </aside>
     </>
   );

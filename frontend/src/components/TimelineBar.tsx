@@ -1,5 +1,7 @@
 "use client";
 
+import { useState } from "react";
+import PanelToggle from "./PanelToggle";
 import { clock, fmtDuration, seek, useClockTime, utcAt } from "@/lib/clock";
 import type { CloseEvent } from "@/lib/types";
 
@@ -10,6 +12,7 @@ export default function TimelineBar({ horizon, epoch, events, activeEventId, onS
   horizon: number; epoch: string; events: CloseEvent[];
   activeEventId: string | null; onSelectEvent: (id: string) => void;
 }) {
+  const [collapsed, setCollapsed] = useState(false);
   const t = useClockTime(10);
   const hours = Math.floor(horizon / 3600);
   const pct = (x: number) => `${(100 * x) / horizon}%`;
@@ -21,7 +24,7 @@ export default function TimelineBar({ horizon, epoch, events, activeEventId, onS
           <h2 className="text-sm font-semibold">Mission timeline</h2>
           <span className="font-mono text-sm tabular-nums text-ink">{utcAt(epoch, t)} UTC · simulation</span>
           <span className="font-mono text-xs tabular-nums text-muted">{fmtDuration(t)}</span>
-          <div className="ml-auto flex items-center gap-1">
+          <div className={`ml-auto items-center gap-1 ${collapsed ? "hidden" : "flex"}`}>
             <button
               onClick={() => (clock.playing = !clock.playing)}
               className="rounded-md border border-line bg-panel-2 px-2.5 py-1 text-xs hover:border-line-strong"
@@ -39,8 +42,13 @@ export default function TimelineBar({ horizon, epoch, events, activeEventId, onS
               </button>
             ))}
           </div>
+          <div className={collapsed ? "ml-auto" : undefined}>
+            <PanelToggle label="Mission timeline" target="mission-time-slider" collapsed={collapsed} onToggle={() => setCollapsed(!collapsed)} />
+          </div>
         </div>
         <div
+          id="mission-time-slider"
+          hidden={collapsed}
           className="relative h-12 cursor-pointer rounded-lg border border-line bg-panel-2/70"
           onClick={(e) => {
             const r = e.currentTarget.getBoundingClientRect();

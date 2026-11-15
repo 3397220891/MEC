@@ -7,22 +7,32 @@ import "./login.css";
 
 export default function LoginPage() {
   const router = useRouter();
+  const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
 
-  function enterMission(event: FormEvent<HTMLFormElement>) {
+  async function enterMission(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    const callsign = String(new FormData(event.currentTarget).get("callsign") ?? "").trim();
-    if (!callsign) {
-      setError("Enter an operator callsign.");
-      return;
-    }
+    if (busy) return;
+    const fields = new FormData(event.currentTarget);
+    setError("");
+    setBusy(true);
     try {
-      sessionStorage.setItem("orbitalguard.demoCallsign", callsign);
+      const result = await fetch("/api/auth/login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: String(fields.get("name") ?? "").trim() }),
+      });
+      if (!result.ok) {
+        setError(result.status === 401 ? "This name is outside the demo operator roster." : "Sign-in is unavailable. Try again.");
+        return;
+      }
+      router.replace("/mission");
+      router.refresh();
     } catch {
-      setError("Enable browser session storage to open the demo.");
-      return;
+      setError("Sign-in is unavailable. Try again.");
+    } finally {
+      setBusy(false);
     }
-    router.push("/mission");
   }
 
   return (
@@ -37,14 +47,13 @@ export default function LoginPage() {
           <span className="access-title-line">Mission</span>{" "}
           <span className="access-title-line">control</span><span className="access-cursor" aria-hidden="true" />
         </h1>
-        <p className="access-intro">Enter your callsign to open the demo console.</p>
+        <p className="access-intro">Enter your full name to join the demo.</p>
         <form className="access-form" onSubmit={enterMission}>
-          <label htmlFor="callsign">Operator callsign</label>
-          <input id="callsign" name="callsign" autoComplete="off" autoCapitalize="characters" spellCheck={false}
-            maxLength={24} required placeholder="e.g. KESTREL" aria-describedby={error ? "access-error" : undefined}
-            aria-invalid={Boolean(error)} onChange={() => setError("")} />
+          <label htmlFor="name">Operator name</label>
+          <input id="name" name="name" autoComplete="name" spellCheck={false}
+            maxLength={80} required aria-describedby={error ? "access-error" : undefined} onChange={() => setError("")} />
           {error && <p id="access-error" role="alert">{error}</p>}
-          <button type="submit">Enter mission control <span aria-hidden="true">&#x2197;&#xFE0E;</span></button>
+          <button type="submit" disabled={busy}>{busy ? "Signing in…" : "Enter mission control"} <span aria-hidden="true">&#x2197;&#xFE0E;</span></button>
         </form>
         <section className="access-terminal" aria-label="Simulated startup log">
           <p>[SYSTEM BOOT] OrbitalGuard AI</p>

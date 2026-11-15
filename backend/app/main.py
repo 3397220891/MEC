@@ -7,12 +7,12 @@ from contextlib import asynccontextmanager
 from typing import Literal
 
 import numpy as np
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, Field
 
-from . import config, db
+from . import config, db, operator_auth
 from .agent import chat, chat_stream, runner
 from .physics import maneuver as mnv
 from .physics.propagation import state, states
@@ -34,7 +34,7 @@ def _auto_investigate(mission) -> list[str]:
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
-    db.conn()
+    operator_auth.seed_operators()
     mission = STORE.load("maneuver")
     for event in mission.events:
         if event["severity"] not in ("RED", "AMBER"):
@@ -52,6 +52,22 @@ async def lifespan(_app: FastAPI):
 app = FastAPI(title="OrbitalGuard AI", version="0.1.0", lifespan=lifespan,
               description="Satellite close-approach screening and explainable AI investigation. Advisory only.")
 app.add_middleware(CORSMiddleware, allow_origins=config.CORS_ORIGINS, allow_methods=["GET", "POST"], allow_headers=["*"])
+
+
+app.include_router(operator_auth.router)
+
+
+@app.middleware("http")
+async def require_operator(request: Request, call_next):
+    path = request.url.path
+    if path.startswith("/api/") and path not in {
+        "/api/health", "/api/auth/login", "/api/auth/me", "/api/auth/logout",
+    } and request.method != "OPTIONS":
+        operator = operator_auth.current_operator(request)
+        if operator is None:
+            return JSONResponse({"detail": "Sign in to continue."}, status_code=401)
+        request.state.operator = operator
+    return await call_next(request)
 
 
 def _mission():
@@ -127,8 +143,10 @@ def trajectories(step_s: float = Query(60.0, ge=10, le=600)):
     out = {}
     for o in m.objects:
         r, _, e = states(o.satrec, m.epoch, t)
-        r[e != 0] = np.nan
-        out[o.id] = np.round(r, 2).flatten().tolist()
+        valid = (e == 0) & np.isfinite(r).all(axis=1)
+        samples = np.round(r, 2).astype(object)
+        samples[~valid] = None
+        out[o.id] = samples.ravel().tolist()
     return {"epoch_utc": m.epoch.iso(), "gmst0_rad": m.epoch.gmst(0.0), "step_s": step_s, "n": len(t), "positions": out}
 
 
@@ -166,7 +184,6 @@ class StartInvestigation(BaseModel):
 
 class Decision(BaseModel):
     decision: Literal["approve", "reject"]
-    operator: str = Field(min_length=1, max_length=64)
     note: str = Field(default="", max_length=500)
 
 
@@ -199,19 +216,20 @@ def maneuver_plan(inv_id: str, maneuver_id: str | None = None, step_s: float = Q
 
 
 @app.post("/api/investigations/{inv_id}/decision")
-def decide(inv_id: str, body: Decision):
+def decide(inv_id: str, body: Decision, request: Request):
+    operator = request.state.operator["name"]
     inv = db.query_one("SELECT status, recommendation FROM investigations WHERE id = ?", (inv_id,))
     if inv is None:
         raise HTTPException(404, "investigation not found")
     if inv["status"] != "awaiting_approval":
         raise HTTPException(409, f"investigation is '{inv['status']}', not awaiting approval")
-    decision = {"decision": body.decision, "operator": body.operator.strip(), "note": body.note.strip(), "decided_at": db.now_iso(),
+    decision = {"decision": body.decision, "operator": operator, "note": body.note.strip(), "decided_at": db.now_iso(),
                 "recommended_action": (inv["recommendation"] or {}).get("recommended_action"),
                 "maneuver_id": (inv["recommendation"] or {}).get("recommended_maneuver_id"),
                 "effect": "Decision recorded for audit only. OrbitalGuard cannot command spacecraft."}
     status = "approved" if body.decision == "approve" else "rejected"
     db.execute("UPDATE investigations SET status = ?, decision = ? WHERE id = ?", (status, db.dumps(decision), inv_id))
-    db.audit(body.operator.strip(), f"recommendation_{status}", {"investigation": inv_id, **decision})
+    db.audit(operator, f"recommendation_{status}", {"investigation": inv_id, **decision})
     return {"investigation_id": inv_id, "status": status, "decision": decision}
 
 

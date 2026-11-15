@@ -190,3 +190,6 @@
 @media (prefers-reduced-motion: reduce) {
   .mission *, .mission *::before, .mission *::after { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; }
 }
+
+.mission-right > .mission-group-chat[data-collapsed="true"] { align-self: start; }
+.mission-alert-queue[data-collapsed="true"] { flex-direction: row; align-items: center; }
